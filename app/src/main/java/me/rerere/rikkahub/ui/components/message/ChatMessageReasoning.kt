@@ -180,6 +180,8 @@ private fun ReasoningContent(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        // 流式生成期间不启用 SelectionContainer，避免 selectable 列表并发修改导致的
+        // ConcurrentModificationException（详见 ChatMessage.kt 文本块同样处理）。
         if (loading) {
             reasoningContent()
         } else {
@@ -240,6 +242,7 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
                     modifier = Modifier.shimmer(isLoading = loading),
                 )
             }
+            // 编辑入口：仅在历史消息（已结束生成）上显示，避免打断流式输出
             if (onEditReasoning != null && !loading) {
                 IconButton(
                     onClick = { showEditDialog = true },
@@ -247,7 +250,7 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
                 ) {
                     Icon(
                         imageVector = HugeIcons.Edit02,
-                        contentDescription = "编辑思维链",
+                        contentDescription = stringResource(R.string.edit_reasoning),
                         modifier = Modifier.size(14.dp),
                         tint = MaterialTheme.colorScheme.secondary,
                     )
@@ -268,17 +271,18 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
         },
     )
 
-    if (showEditDialog) {
+    if (showEditDialog && onEditReasoning != null) {
         ChatMessageReasoningEditDialog(
             reasoning = reasoning,
             onDismiss = { showEditDialog = false },
             onConfirm = { newText ->
-                onEditReasoning?.invoke(reasoning, newText)
                 showEditDialog = false
+                onEditReasoning(reasoning, newText)
             },
         )
     }
 }
+
 
 @Composable
 private fun ReasoningTitle(title: String) {
