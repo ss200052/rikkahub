@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -41,6 +42,7 @@ import kotlinx.coroutines.isActive
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Idea01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.Assistant
@@ -178,8 +180,6 @@ private fun ReasoningContent(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        // 流式生成期间不启用 SelectionContainer，避免 selectable 列表并发修改导致的
-        // ConcurrentModificationException（详见 ChatMessage.kt 文本块同样处理）。
         if (loading) {
             reasoningContent()
         } else {
@@ -197,11 +197,13 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
     assistant: Assistant?,
     fadeHeight: Float = 64f,
     collapsedAdaptiveWidth: Boolean = false,
+    onEditReasoning: ((UIMessagePart.Reasoning, String) -> Unit)? = null,
 ) {
     val (state, loading) = rememberReasoningState(reasoning)
     val thinkingTitle = reasoning.reasoning.extractThinkingTitle()
     val showThinkingTitle = loading && thinkingTitle != null
     val chatFontFamily = LocalTextStyle.current.fontFamily
+    var showEditDialog by remember { mutableStateOf(false) }
 
     ControlledChainOfThoughtStep(
         expanded = state.expandState == ReasoningCardState.Expanded,
@@ -238,6 +240,19 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
                     modifier = Modifier.shimmer(isLoading = loading),
                 )
             }
+            if (onEditReasoning != null && !loading) {
+                IconButton(
+                    onClick = { showEditDialog = true },
+                    modifier = Modifier.size(24.dp),
+                ) {
+                    Icon(
+                        imageVector = HugeIcons.Edit02,
+                        contentDescription = "编辑思维链",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
         },
         collapsedAdaptiveWidth = collapsedAdaptiveWidth,
         contentVisible = state.expandState != ReasoningCardState.Collapsed,
@@ -252,8 +267,18 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
             )
         },
     )
-}
 
+    if (showEditDialog) {
+        ChatMessageReasoningEditDialog(
+            reasoning = reasoning,
+            onDismiss = { showEditDialog = false },
+            onConfirm = { newText ->
+                onEditReasoning?.invoke(reasoning, newText)
+                showEditDialog = false
+            },
+        )
+    }
+}
 
 @Composable
 private fun ReasoningTitle(title: String) {
