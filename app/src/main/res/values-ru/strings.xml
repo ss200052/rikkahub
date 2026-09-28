@@ -314,6 +314,8 @@
   <string name="create_fork">Создать форк</string>
   <string name="db_migrating">Перенос базы данных…</string>
   <string name="deep_thinking">Глубокое мышление</string>
+  <string name="edit_reasoning">Редактировать рассуждение</string>
+  <string name="edit_reasoning_title">Редактирование рассуждения</string>
   <string name="deep_thinking_seconds">Думал %1$.1f секунд</string>
   <string name="delete">Удалить</string>
   <string name="donate_page_afdian_desc">Для пользователей 🇨🇳</string>
