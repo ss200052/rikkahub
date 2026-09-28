@@ -316,6 +316,8 @@
   <string name="create_fork">Create a fork</string>
   <string name="db_migrating">Migrating database...</string>
   <string name="deep_thinking">Deep Thinking</string>
+  <string name="edit_reasoning">Edit reasoning</string>
+  <string name="edit_reasoning_title">Edit Reasoning</string>
   <string name="deep_thinking_seconds">Thought for %1$.1f seconds</string>
   <string name="delete">Delete</string>
   <string name="donate_page_afdian_desc">For 🇨🇳 users</string>
