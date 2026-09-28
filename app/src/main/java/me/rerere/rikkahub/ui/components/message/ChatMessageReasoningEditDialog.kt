@@ -14,9 +14,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.R
 
+/**
+ * 思维链编辑对话框。
+ *
+ * 修改仅在点击保存后通过 [onConfirm] 回传，取消不做任何改动。
+ */
 @Composable
 fun ChatMessageReasoningEditDialog(
     reasoning: UIMessagePart.Reasoning,
@@ -27,7 +34,7 @@ fun ChatMessageReasoningEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("编辑思维链") },
+        title = { Text(stringResource(R.string.edit_reasoning_title)) },
         text = {
             OutlinedTextField(
                 value = text,
@@ -36,7 +43,8 @@ fun ChatMessageReasoningEditDialog(
                     .fillMaxWidth()
                     .heightIn(min = 160.dp, max = 420.dp)
                     .verticalScroll(rememberScrollState()),
-                label = { Text("思维链内容") },
+                label = { Text(stringResource(R.string.edit_reasoning)) },
+                singleLine = false,
             )
         },
         confirmButton = {
@@ -44,11 +52,13 @@ fun ChatMessageReasoningEditDialog(
                 onClick = { onConfirm(text) },
                 enabled = text != reasoning.reasoning,
             ) {
-                Text("保存")
+                Text(stringResource(R.string.chat_page_save))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.chat_page_cancel))
+            }
         },
     )
 }
