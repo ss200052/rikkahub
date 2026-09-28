@@ -401,6 +401,8 @@
   <string name="create_fork">إنشاء فرع</string>
   <string name="db_migrating">جارٍ ترحيل قاعدة البيانات...</string>
   <string name="deep_thinking">التفكير العميق</string>
+  <string name="edit_reasoning">تحرير الاستدلال</string>
+  <string name="edit_reasoning_title">تحرير الاستدلال</string>
   <string name="deep_thinking_seconds">فكّر لمدة %1$.1f ثانية</string>
   <string name="delete">حذف</string>
   <string name="donate_page_afdian_desc">للمستخدمين في الصين 🇨🇳</string>
