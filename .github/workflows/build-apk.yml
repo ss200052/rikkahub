@@ -1,0 +1,36 @@
+name: Build RikkaHub APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Fix google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            printf '%s' '{"project_info":{"project_number":"0","project_id":"rikkahub","storage_bucket":"rikkahub.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"me.rerere.rikkahub"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > app/google-services.json
+          fi
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
