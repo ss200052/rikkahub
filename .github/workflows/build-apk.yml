@@ -4,12 +4,11 @@ name: Build RikkaHub APK
 # 跳过 web-ui 的前端构建（内置网页服务用不了，聊天功能不受影响），
 # 这样 CI 里不需要 Node/pnpm，构建更快也更稳。
 #
-# 注意：keystore 是每次现场生成的，所以每个产物的签名都不同 ——
-# 换装新包前必须先备份再卸载旧版。若想以后能覆盖升级，请改用固定 keystore：
-#   1. 本地生成一次密钥：keytool -genkeypair -keystore rikka.jks -alias rikka \
-#        -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Rikka"
-#   2. base64 后存进仓库 Secrets（KEY_BASE64 / STORE_PASSWORD / KEY_PASSWORD）
-#   3. 把下面 Generate keystore 一步换成解码 secrets
+# 签名用的是仓库里 .github/rikka.jks.b64 还原出来的固定密钥，
+# 所以每次构建的签名都一样 —— 新包可以直接覆盖安装，数据不会丢。
+#
+# ⚠ 该密钥是公开的（仓库为 public）。它只用于这个私人魔改版的自签名，
+#   不要拿去给任何会被分发或上架的东西签名。
 
 on:
   workflow_dispatch:
@@ -39,14 +38,11 @@ jobs:
             printf '%s' '{"project_info":{"project_number":"0","project_id":"rikkahub","storage_bucket":"rikkahub.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"me.rerere.rikkahub.mine"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > app/google-services.json
           fi
 
-      - name: Generate keystore
+      # 固定签名：从仓库里的 base64 还原，保证每次构建签名一致，可直接覆盖升级
+      - name: Restore keystore
         run: |
-          keytool -genkeypair -v \
-            -keystore app/app.key \
-            -alias rikka \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass rikkahub123 -keypass rikkahub123 \
-            -dname "CN=Rikka, OU=Dev, O=Personal, L=City, S=State, C=CN"
+          base64 -d .github/rikka.jks.b64 > app/app.key
+          ls -l app/app.key
 
       - name: Write signing config
         run: |
