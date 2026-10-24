@@ -578,6 +578,8 @@ private fun ChatPageContent(
                     onCommit = { batchCommit = it },
                     onRerunLane = { vm.rerunBatchLane(it) },
                     onRerunFailed = { vm.rerunBatchFailedLanes() },
+                    notifyOnHit = setting.notifyBatchHitInBackground,
+                    onToggleNotify = { vm.setBatchHitNotification(it) },
                 )
             }
 

@@ -85,6 +85,8 @@ data class Settings(
     val batchRegeneration: BatchRegenerationConfig = BatchRegenerationConfig(),
     // 已建好的全文索引结构版本；低于当前版本时启动会自动重建一次
     val ftsSchemaVersion: Int = 0,
+    // 批量重新生成在后台跑到命中时是否发通知
+    val notifyBatchHitInBackground: Boolean = true,
 ) {
     companion object {
         // 构造一个用于初始化的settings, 但它不能用于保存，防止使用初始值存储

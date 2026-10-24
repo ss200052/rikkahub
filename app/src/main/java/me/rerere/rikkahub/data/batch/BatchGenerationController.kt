@@ -7,8 +7,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOn
@@ -77,6 +80,10 @@ class BatchGenerationController(
 
     /** 重新发起一路所需的工厂；start 时记下来，供「重跑」使用 */
     private var laneFactory: (() -> Pair<AgentRequest, AgentHooks>)? = null
+
+    /** 某一路命中落盘词时发出一次，供后台通知使用 */
+    private val _laneHits = MutableSharedFlow<LaneHitEvent>(extraBufferCapacity = 32)
+    val laneHits: SharedFlow<LaneHitEvent> = _laneHits.asSharedFlow()
 
     /** 是否有批量任务正在跑（全部路都已进入终态就为 false） */
     val isRunning: Boolean
@@ -287,6 +294,15 @@ class BatchGenerationController(
             // 这个判断必须排在「未命中也重 roll」之前，否则会把好结果丢掉。
             if (commitHit != null) {
                 publish(index, LaneState.Hit(index, message, commitHit))
+                // 通知给 ChatService：后台时弹通知栏
+                _laneHits.tryEmit(
+                    LaneHitEvent(
+                        laneIndex = index,
+                        laneCount = config.parallelCount,
+                        keyword = commitHit.keyword,
+                        source = commitHit.source,
+                    ),
+                )
                 return
             }
 

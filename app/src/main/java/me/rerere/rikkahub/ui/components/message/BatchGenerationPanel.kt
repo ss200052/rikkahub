@@ -19,6 +19,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +59,8 @@ fun BatchGenerationPanel(
     onCommit: (Int) -> Unit,
     onRerunLane: (Int) -> Unit = {},
     onRerunFailed: () -> Unit = {},
+    notifyOnHit: Boolean = true,
+    onToggleNotify: (Boolean) -> Unit = {},
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -81,6 +84,25 @@ fun BatchGenerationPanel(
                     if (session.lanes.any { it is me.rerere.rikkahub.data.batch.LaneState.Failed }) {
                         TextButton(onClick = onRerunFailed) { Text("重跑全部失败") }
                     }
+                }
+
+                // 后台命中提醒：只在 App 不在前台时推送
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "后台命中时推送通知",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = notifyOnHit,
+                        onCheckedChange = onToggleNotify,
+                    )
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))

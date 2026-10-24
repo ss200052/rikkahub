@@ -1,8 +1,12 @@
 package me.rerere.rikkahub.service
 
 import android.app.Application
+import android.app.PendingIntent
 import android.util.Log
 import androidx.annotation.StringRes
+import androidx.core.app.NotificationCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.core.net.toUri
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -37,6 +41,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.common.android.Logging
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.ChatRequestFactory
 import me.rerere.rikkahub.data.ai.ChatTurnContext
@@ -56,7 +61,9 @@ import me.rerere.rikkahub.data.batch.BatchGenerationController
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.BatchSession
 import me.rerere.rikkahub.data.batch.CommitTarget
+import me.rerere.rikkahub.data.batch.KeywordSource
 import me.rerere.rikkahub.data.batch.LaneCommitRecord
+import me.rerere.rikkahub.data.batch.LaneHitEvent
 import me.rerere.rikkahub.data.batch.commitBatchLane
 import me.rerere.rikkahub.data.batch.normalized
 import me.rerere.rikkahub.data.batch.resultMessage
@@ -88,6 +95,7 @@ import me.rerere.rikkahub.data.model.withoutConversationFields
 import me.rerere.rikkahub.data.model.withoutUnresumableToolCalls
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
+import me.rerere.rikkahub.utils.sendNotification
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import java.net.ConnectException
@@ -98,6 +106,9 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
+
+/** 批量命中通知的固定 id，后来的命中覆盖前一条 */
+private const val BATCH_HIT_NOTIFICATION_ID = 2003
 
 data class ChatError(
     val id: Uuid = Uuid.random(),
@@ -189,6 +200,48 @@ class ChatService(
                 }
             }.onFailure { Log.w(TAG, "init: rebuild full text index failed", it) }
         }
+
+        // 批量某一路命中落盘词时，如果 App 在后台就推一条通知
+        appScope.launch {
+            batchController.laneHits.collect { hit ->
+                val enabled = runCatching {
+                    settingsStore.awaitLoaded().notifyBatchHitInBackground
+                }.getOrDefault(true)
+                if (!enabled) return@collect
+                if (isAppVisible()) return@collect
+                notifyBatchLaneHit(hit)
+            }
+        }
+    }
+
+    /** App 是否处于可见（前台）状态 */
+    private fun isAppVisible(): Boolean =
+        ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
+    private fun notifyBatchLaneHit(hit: LaneHitEvent) {
+        val where = if (hit.source == KeywordSource.REASONING) "思考" else "正文"
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val contentIntent = launchIntent?.let {
+            PendingIntent.getActivity(
+                context,
+                0,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        runCatching {
+            context.sendNotification(
+                channelId = CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID,
+                notificationId = BATCH_HIT_NOTIFICATION_ID,
+            ) {
+                title = "批量命中：第 ${hit.laneIndex + 1}/${hit.laneCount} 路"
+                content = "命中${where}关键词「${hit.keyword}」，回到 App 可以查看并落盘"
+                autoCancel = true
+                useDefaults = true
+                category = NotificationCompat.CATEGORY_MESSAGE
+                this.contentIntent = contentIntent
+            }
+        }.onFailure { Log.w(TAG, "notifyBatchLaneHit failed", it) }
     }
 
     // 错误状态

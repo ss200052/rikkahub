@@ -155,11 +155,18 @@ val LaneState.isComplete: Boolean
 
 /** 已落盘记录，用于在格子上显示「已落盘至」 */
 @Serializable
-data class LaneCommitRecord(
-    val laneIndex: Int,
+data class LaneCommitRecord(    val laneIndex: Int,
     val target: CommitTarget,
     /** NEW_BRANCH 时是新对话的 id */
     val branchConversationId: String? = null,
+)
+
+/** 某一路命中落盘词的事件，用于 App 在后台时推送通知 */
+data class LaneHitEvent(
+    val laneIndex: Int,
+    val laneCount: Int,
+    val keyword: String,
+    val source: KeywordSource,
 )
 
 /** 一次批量任务的全部状态 */

@@ -307,6 +307,13 @@ class ChatVM(
 
     fun rerunBatchFailedLanes() = chatService.rerunBatchFailedLanes()
 
+    /** 后台命中时是否推送通知 */
+    fun setBatchHitNotification(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.update { it.copy(notifyBatchHitInBackground = enabled) }
+        }
+    }
+
     fun unlockBatch() = chatService.unlockBatch()
 
     fun discardBatch() = chatService.discardBatch()
