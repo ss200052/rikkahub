@@ -231,7 +231,9 @@ private fun LaneState.detailLabel(): String? = when (this) {
     }
 
     is LaneState.Failed -> error
-    is LaneState.Hit -> if (isComplete) "点击查看完整内容" else null
+    is LaneState.Hit -> hit?.let {
+        "命中${if (it.source == KeywordSource.REASONING) "思考" else "正文"}：${it.keyword}"
+    } ?: "点击查看完整内容"
     is LaneState.Clean -> "点击查看完整内容"
     is LaneState.Cancelled -> if (resultOrNull() == null) "本轮没有留下内容" else "内容不完整，可选落盘"
     is LaneState.Idle -> null

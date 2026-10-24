@@ -197,14 +197,15 @@ class BatchGenerationController(
             }
 
             // 落盘词只做标记：配了才判定，没配就一律不算命中
-            val commitHit = config.commitKeywords.isNotEmpty() && config.commitKeywords.firstKeywordIn(
-                text = message.batchScanText(config.commitScope),
-                ignoreCase = config.ignoreCase,
-            ) != null
+            val commitHit = config.findCommitHit(message)
 
             publish(
                 index,
-                if (commitHit) LaneState.Hit(index, message) else LaneState.Clean(index, message),
+                if (commitHit != null) {
+                    LaneState.Hit(index, message, commitHit)
+                } else {
+                    LaneState.Clean(index, message)
+                },
             )
             return
         }

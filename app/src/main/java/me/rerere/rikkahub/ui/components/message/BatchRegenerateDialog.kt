@@ -30,7 +30,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
+import me.rerere.rikkahub.data.batch.KeywordScope
 import kotlin.math.roundToInt
+
+/** 落盘词的匹配范围选项 */
+private enum class CommitScopeOption(val scope: KeywordScope, val label: String) {
+    TEXT(KeywordScope.TEXT_ONLY, "仅正文"),
+    REASONING(KeywordScope.REASONING_ONLY, "仅思考"),
+    BOTH(KeywordScope.TEXT_AND_REASONING, "正文+思考"),
+}
 
 /**
  * 批量重新生成的参数弹窗。
@@ -50,6 +58,7 @@ fun BatchRegenerateDialog(
     var textKeywords by remember { mutableStateOf(initial.rerollTextKeywords) }
     var rerollLimit by remember { mutableStateOf(initial.maxRerollsPerLane) }
     var rerollOnNoHit by remember { mutableStateOf(initial.rerollOnNoHit) }
+    var commitScope by remember { mutableStateOf(initial.commitScope) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -80,10 +89,27 @@ fun BatchRegenerateDialog(
 
                 KeywordEditor(
                     title = "落盘标记词",
-                    hint = "回复中出现这些词就标记为「像样」，不会自动落盘；留空表示全部标记",
+                    hint = "回复中出现这些词就标记为「像样」，不会自动落盘；留空表示不标记",
                     keywords = commitKeywords,
                     onChange = { commitKeywords = it },
                 )
+
+                // 匹配范围：默认只看正文，避免思考里提到一次就被标记
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "落盘词的匹配范围",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CommitScopeOption.entries.forEach { option ->
+                            FilterChip(
+                                selected = commitScope == option.scope,
+                                onClick = { commitScope = option.scope },
+                                label = { Text(option.label) },
+                            )
+                        }
+                    }
+                }
 
                 KeywordEditor(
                     title = "重 roll · 仅思考内容",
@@ -149,6 +175,7 @@ fun BatchRegenerateDialog(
                             rerollTextKeywords = textKeywords,
                             maxRerollsPerLane = rerollLimit,
                             rerollOnNoHit = rerollOnNoHit,
+                            commitScope = commitScope,
                         ),
                     )
                 },

@@ -56,7 +56,7 @@ data class BatchRegenerationConfig(
     val rerollReasoningKeywords: List<String> = emptyList(),
     /** 只在正文里匹配的重 roll 词；为空表示不按正文重 roll */
     val rerollTextKeywords: List<String> = emptyList(),
-    val commitScope: KeywordScope = KeywordScope.TEXT_AND_REASONING,
+    val commitScope: KeywordScope = KeywordScope.TEXT_ONLY,
     val ignoreCase: Boolean = true,
     /** 单路最多重 roll 几次；0 表示不设限，只能靠手动停止 */
     val maxRerollsPerLane: Int = 5,
@@ -104,8 +104,12 @@ sealed interface LaneState {
         val lastHit: KeywordHit? = null,
     ) : LaneState
 
-    /** 跑完且命中落盘词 */
-    data class Hit(override val index: Int, val message: UIMessage) : LaneState
+    /** 跑完且命中落盘词；[hit] 记录命中的词和位置，方便在格子上核对 */
+    data class Hit(
+        override val index: Int,
+        val message: UIMessage,
+        val hit: KeywordHit? = null,
+    ) : LaneState
 
     /** 跑完但未命中落盘词 */
     data class Clean(override val index: Int, val message: UIMessage) : LaneState
@@ -223,6 +227,28 @@ internal fun BatchRegenerationConfig.findRerollHit(message: UIMessage): KeywordH
     }
     rerollTextKeywords.firstKeywordIn(message.batchText(), ignoreCase)?.let {
         return KeywordHit(it, KeywordSource.TEXT)
+    }
+    return null
+}
+
+/**
+ * 检查落盘标记词，返回命中的词与位置。
+ *
+ * 按 [BatchRegenerationConfig.commitScope] 决定查正文、查思考还是两者都查；
+ * 命中位置会显示在格子上，避免出现「正文里找不到却被标记命中」的困惑。
+ */
+internal fun BatchRegenerationConfig.findCommitHit(message: UIMessage): KeywordHit? {
+    if (commitKeywords.isEmpty()) return null
+
+    if (commitScope != KeywordScope.REASONING_ONLY) {
+        commitKeywords.firstKeywordIn(message.batchText(), ignoreCase)?.let {
+            return KeywordHit(it, KeywordSource.TEXT)
+        }
+    }
+    if (commitScope != KeywordScope.TEXT_ONLY) {
+        commitKeywords.firstKeywordIn(message.batchReasoningText(), ignoreCase)?.let {
+            return KeywordHit(it, KeywordSource.REASONING)
+        }
     }
     return null
 }
