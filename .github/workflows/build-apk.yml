@@ -1,0 +1,65 @@
+name: Build RikkaHub APK
+
+# 基于 3.1.0 的自助打包：手动触发，产出一个可直接安装的 release APK。
+# 跳过 web-ui 的前端构建（内置网页服务用不了，聊天功能不受影响），
+# 这样 CI 里不需要 Node/pnpm，构建更快也更稳。
+#
+# 注意：keystore 是每次现场生成的，所以每个产物的签名都不同 ——
+# 换装新包前必须先备份再卸载旧版。若想以后能覆盖升级，请改用固定 keystore：
+#   1. 本地生成一次密钥：keytool -genkeypair -keystore rikka.jks -alias rikka \
+#        -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Rikka"
+#   2. base64 后存进仓库 Secrets（KEY_BASE64 / STORE_PASSWORD / KEY_PASSWORD）
+#   3. 把下面 Generate keystore 一步换成解码 secrets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 3.1.0 的官方 CI 用 21，AGP 9.4 + Gradle 9.6 按这条路径验证过
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Fix google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            printf '%s' '{"project_info":{"project_number":"0","project_id":"rikkahub","storage_bucket":"rikkahub.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"me.rerere.rikkahub"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > app/google-services.json
+          fi
+
+      - name: Generate keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore app/app.key \
+            -alias rikka \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass rikkahub123 -keypass rikkahub123 \
+            -dname "CN=Rikka, OU=Dev, O=Personal, L=City, S=State, C=CN"
+
+      - name: Write signing config
+        run: |
+          printf 'storeFile=app.key\nstorePassword=rikkahub123\nkeyAlias=rikka\nkeyPassword=rikkahub123\n' > local.properties
+
+      - name: Build release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease -x :web:buildWebUi --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
