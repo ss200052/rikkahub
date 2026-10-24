@@ -81,6 +81,9 @@ class BatchGenerationController(
     /** 重新发起一路所需的工厂；start 时记下来，供「重跑」使用 */
     private var laneFactory: (() -> Pair<AgentRequest, AgentHooks>)? = null
 
+    /** 批次编号自增源，用于区分新旧两批任务 */
+    private var runSeq = 0L
+
     /** 某一路命中落盘词时发出一次，供后台通知使用 */
     private val _laneHits = MutableSharedFlow<LaneHitEvent>(extraBufferCapacity = 32)
     val laneHits: SharedFlow<LaneHitEvent> = _laneHits.asSharedFlow()
@@ -107,11 +110,14 @@ class BatchGenerationController(
     ): Boolean = startMutex.withLock {
         if (isRunning) return@withLock false
 
+        // 每次开始都换一个新编号：上一批万一还有协程没停干净，它们写不进这一批
+        val runId = ++runSeq
         _session.value = BatchSession(
             conversationId = conversationId.toString(),
             targetNodeId = targetNodeId.toString(),
             config = config,
             lanes = List(config.parallelCount) { LaneState.Idle(it) },
+            runId = runId,
         )
         laneJobs.clear()
         // 记住重新发起某一路的方式，供「重跑」使用
@@ -121,7 +127,7 @@ class BatchGenerationController(
             try {
                 supervisorScope {
                     val handles = (0 until config.parallelCount).map { index ->
-                        launch { runLane(index, config, newAgent) }
+                        launch { runLane(runId, index, config, newAgent) }
                             .also { laneJobs[index] = it }
                     }
                     handles.forEach { it.join() }
@@ -129,7 +135,9 @@ class BatchGenerationController(
             } finally {
                 // 被 stopAll 取消时也要置位，否则等待「已完成」的调用方会一直挂着
                 withContext(NonCancellable) {
-                    _session.update { it?.copy(finished = true) }
+                    _session.update {
+                        if (it?.runId == runId) it.copy(finished = true) else it
+                    }
                 }
             }
         }
@@ -151,11 +159,12 @@ class BatchGenerationController(
         val lane = current.lane(index) ?: return
         if (!lane.isInspectable) return
 
+        val runId = current.runId
         laneJobs[index]?.cancel()
-        publish(index, LaneState.Running(index, attempt = 1, rerollCount = 0))
+        publish(runId, index, LaneState.Running(index, attempt = 1, rerollCount = 0))
 
         laneJobs[index] = appScope.launch(Dispatchers.IO) {
-            runLane(index, current.config, factory)
+            runLane(runId, index, current.config, factory)
         }
     }
 
@@ -174,13 +183,18 @@ class BatchGenerationController(
     /** 停止全部路 */
     fun stopAll() {
         batchJob?.cancel()
+        // 重跑启动的 job 不在 batchJob 层级里，单独停
+        laneJobs.values.forEach { it.cancel() }
     }
 
     /** 关闭面板时调用：停止并清空。已落盘的内容不受影响 */
     fun discard() {
         batchJob?.cancel()
+        // 重跑启动的 job 不在 batchJob 的层级里，必须单独取消，否则它们会继续跑并写旧数据
+        laneJobs.values.forEach { it.cancel() }
         batchJob = null
         laneJobs.clear()
+        laneFactory = null
         _session.value = null
     }
 
@@ -198,6 +212,7 @@ class BatchGenerationController(
         _session.value?.commits?.filter { it.laneIndex == laneIndex }.orEmpty()
 
     private suspend fun runLane(
+        runId: Long,
         index: Int,
         config: BatchRegenerationConfig,
         newAgent: () -> Pair<AgentRequest, AgentHooks>,
@@ -208,7 +223,7 @@ class BatchGenerationController(
         var rateLimitRetries = 0
         var rateLimitHits = 0
 
-        publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
+        publish(runId, index, LaneState.Running(index, attempt, rerollCount, lastHit))
 
         while (true) {
             var latest: UIMessage? = null
@@ -232,7 +247,7 @@ class BatchGenerationController(
             } catch (signal: LaneRerollSignal) {
                 hit = signal.hit
             } catch (e: CancellationException) {
-                publish(index, LaneState.Cancelled(index, latest))
+                publish(runId, index, LaneState.Cancelled(index, latest))
                 throw e
             } catch (e: Exception) {
                 // 被服务端限流（429 / too many requests）时先退避重试，而不是直接把这路判死
@@ -270,20 +285,20 @@ class BatchGenerationController(
             if (hit != null) {
                 // 命中重 roll 词：还有额度就重来，额度用完就保留这轮被截断的内容
                 if (reachedLimit) {
-                    publish(index, LaneState.Truncated(index, latest, attempt, hit))
+                    publish(runId, index, LaneState.Truncated(index, latest, attempt, hit))
                     return
                 }
                 rerollCount++
                 lastHit = hit
                 attempt++
-                bumpTotalRerolls()
-                publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
+                bumpTotalRerolls(runId)
+                publish(runId, index, LaneState.Running(index, attempt, rerollCount, lastHit))
                 continue
             }
 
             val message = latest
             if (message == null) {
-                publish(index, LaneState.Failed(index, "no message produced"))
+                publish(runId, index, LaneState.Failed(index, "no message produced"))
                 return
             }
 
@@ -293,17 +308,19 @@ class BatchGenerationController(
             // 已经命中落盘词 = 这轮就是要的结果，直接收下，不再重来。
             // 这个判断必须排在「未命中也重 roll」之前，否则会把好结果丢掉。
             if (commitHit != null) {
-                publish(index, LaneState.Hit(index, message, commitHit))
-                bumpTotalHits()
-                // 通知给 ChatService：后台时弹通知栏
-                _laneHits.tryEmit(
-                    LaneHitEvent(
-                        laneIndex = index,
-                        laneCount = config.parallelCount,
-                        keyword = commitHit.keyword,
-                        source = commitHit.source,
-                    ),
-                )
+                publish(runId, index, LaneState.Hit(index, message, commitHit))
+                bumpTotalHits(runId)
+                // 通知给 ChatService：后台时弹通知栏。旧批次的残余协程不该发通知
+                if (_session.value?.runId == runId) {
+                    _laneHits.tryEmit(
+                        LaneHitEvent(
+                            laneIndex = index,
+                            laneCount = config.parallelCount,
+                            keyword = commitHit.keyword,
+                            source = commitHit.source,
+                        ),
+                    )
+                }
                 return
             }
 
@@ -312,30 +329,43 @@ class BatchGenerationController(
                 rerollCount++
                 lastHit = null
                 attempt++
-                bumpTotalRerolls()
-                publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
+                bumpTotalRerolls(runId)
+                publish(runId, index, LaneState.Running(index, attempt, rerollCount, lastHit))
                 continue
             }
 
-            publish(index, LaneState.Clean(index, message))
+            publish(runId, index, LaneState.Clean(index, message))
             return
         }
     }
 
-    private fun publish(index: Int, state: LaneState) {
+    /**
+     * 写入某一路的状态。
+     *
+     * [runId] 用来丢弃上一批遗留协程的写入：解锁（discard）后旧协程可能还没完全停下，
+     * 不校验的话它们会把上一批的轮次写进新一批的格子，看起来就是数字来回闪。
+     */
+    private fun publish(runId: Long, index: Int, state: LaneState) {
         _session.update { current ->
-            if (current == null || index !in current.lanes.indices) current
+            if (current == null || current.runId != runId) current
+            else if (index !in current.lanes.indices) current
             else current.withLane(state)
         }
     }
 
     /** 整批累计重 roll 次数 +1，用于工作台顶部的总览 */
-    private fun bumpTotalRerolls() {
-        _session.update { it?.copy(totalRerolls = it.totalRerolls + 1) }
+    private fun bumpTotalRerolls(runId: Long) {
+        _session.update {
+            if (it == null || it.runId != runId) it
+            else it.copy(totalRerolls = it.totalRerolls + 1)
+        }
     }
 
     /** 整批累计命中次数 +1 */
-    private fun bumpTotalHits() {
-        _session.update { it?.copy(totalHits = it.totalHits + 1) }
+    private fun bumpTotalHits(runId: Long) {
+        _session.update {
+            if (it == null || it.runId != runId) it
+            else it.copy(totalHits = it.totalHits + 1)
+        }
     }
 }

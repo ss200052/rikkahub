@@ -186,6 +186,11 @@ data class BatchSession(
     /** 用户手动解锁前一直为 true */
     val locked: Boolean = true,
     val commits: List<LaneCommitRecord> = emptyList(),
+    /**
+     * 批次编号：每次 start 自增。
+     * 解锁后上一批可能还有协程没停干净，靠它把这些残余写入丢掉，避免污染新一批格子。
+     */
+    val runId: Long = 0L,
 ) {
     fun lane(index: Int): LaneState? = lanes.getOrNull(index)
 
