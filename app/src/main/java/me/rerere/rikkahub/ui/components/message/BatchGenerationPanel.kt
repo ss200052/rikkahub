@@ -76,11 +76,20 @@ fun BatchGenerationPanel(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("批量重新生成", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = summary(session),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        // 每一项独立成块，宽度不够时自动换行，不会挤成一团
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(0.dp),
+                        ) {
+                            summaryItems(session).forEach { item ->
+                                Text(
+                                    text = item,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
                     if (!session.finished) {
                         TextButton(onClick = onStopAll) { Text("全部停止") }
@@ -197,15 +206,16 @@ fun BatchGenerationPanel(
     }
 }
 
-private fun summary(session: BatchSession): String {
-    val total = session.lanes.size
-    val parts = mutableListOf<String>()
-    if (session.finished) parts += "已全部结束" else parts += "进行中 ${session.finishedCount}/$total"
-    parts += "命中 ${session.hitCount}"
-    if (session.totalHits > 0) parts += "累计命中 ${session.totalHits} 次"
-    parts += "重 roll ${session.totalRerolls} 次"
-    if (session.commits.isNotEmpty()) parts += "已落盘 ${session.commits.size}"
-    return parts.joinToString(" · ")
+/** 顶部总览的每一项；分开返回以便按宽度自动换行 */
+private fun summaryItems(session: BatchSession): List<String> = buildList {
+    add(
+        if (session.finished) "已全部结束"
+        else "进行中 ${session.finishedCount}/${session.lanes.size}",
+    )
+    add("命中 ${session.hitCount}")
+    if (session.totalHits > 0) add("累计命中 ${session.totalHits} 次")
+    add("重 roll ${session.totalRerolls} 次")
+    if (session.commits.isNotEmpty()) add("已落盘 ${session.commits.size}")
 }
 
 @Composable
