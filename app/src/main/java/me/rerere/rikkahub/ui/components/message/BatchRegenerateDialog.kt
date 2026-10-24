@@ -7,16 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,11 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.selection.selectable
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
-import me.rerere.rikkahub.data.batch.ZeroHitPolicy
 import kotlin.math.roundToInt
 
 /**
@@ -51,7 +45,6 @@ fun BatchRegenerateDialog(
     var commitKeywords by remember { mutableStateOf(initial.commitKeywords) }
     var reasoningKeywords by remember { mutableStateOf(initial.rerollReasoningKeywords) }
     var textKeywords by remember { mutableStateOf(initial.rerollTextKeywords) }
-    var zeroHit by remember { mutableStateOf(initial.zeroHitPolicy) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -103,37 +96,10 @@ fun BatchRegenerateDialog(
 
                 HorizontalDivider()
 
-                // ---- 零命中策略 ----
-                Column(modifier = Modifier.selectableGroup()) {
-                    Text(
-                        text = "全部路都没命中落盘词时",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    ZeroHitPolicy.entries.forEach { policy ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = zeroHit == policy,
-                                    role = Role.RadioButton,
-                                    onClick = { zeroHit = policy },
-                                )
-                                .padding(vertical = 2.dp),
-                        ) {
-                            RadioButton(selected = zeroHit == policy, onClick = null)
-                            Text(
-                                text = policy.label(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
-                    }
-                }
-
                 // ---- 成本提示 ----
                 Text(
-                    text = "重 roll 不设上限：最坏请求数为 路数 × 无限，靠面板里的停止按钮兜底。",
+                    text = "落盘由你手动点选，命中落盘词只会标记、不会自动写入对话。" +
+                        "重 roll 不设上限，靠面板里的停止按钮兜底。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -148,7 +114,6 @@ fun BatchRegenerateDialog(
                             commitKeywords = commitKeywords,
                             rerollReasoningKeywords = reasoningKeywords,
                             rerollTextKeywords = textKeywords,
-                            zeroHitPolicy = zeroHit,
                         ),
                     )
                 },
@@ -212,10 +177,4 @@ private fun KeywordEditor(
             ) { Text("添加") }
         }
     }
-}
-
-private fun ZeroHitPolicy.label(): String = when (this) {
-    ZeroHitPolicy.KEEP_LAST_COMPLETED -> "保留最后完成的一条"
-    ZeroHitPolicy.DISCARD_ALL -> "全部丢弃，对话保持原样"
-    ZeroHitPolicy.COMMIT_ALL -> "全部落盘，自己挑"
 }

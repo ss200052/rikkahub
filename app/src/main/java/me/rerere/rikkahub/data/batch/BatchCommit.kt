@@ -75,16 +75,3 @@ private fun Conversation.insertReplyAfter(index: Int, message: UIMessage): Conve
 /** 附件是实际复制一份，两个对话之后各删各的文件，与原分支逻辑保持一致 */
 internal fun UIMessage.withCopiedAttachments(copyFile: (String) -> String): UIMessage =
     copy(parts = parts.map { it.mapLocalFileUrls(copyFile) })
-
-/**
- * 决定全部路都没命中落盘词时用哪一条。
- * [completed] 只包含成功跑完的路，按完成顺序。
- */
-internal fun pickZeroHitMessage(
-    policy: ZeroHitPolicy,
-    completed: List<LaneState>,
-): List<LaneState> = when (policy) {
-    ZeroHitPolicy.DISCARD_ALL -> emptyList()
-    ZeroHitPolicy.KEEP_LAST_COMPLETED -> completed.takeLast(1)
-    ZeroHitPolicy.COMMIT_ALL -> completed
-}

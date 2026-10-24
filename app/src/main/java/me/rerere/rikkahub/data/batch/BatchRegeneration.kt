@@ -26,19 +26,6 @@ data class KeywordHit(
     val source: KeywordSource,
 )
 
-/** 全部路都跑完、但没有任何一路命中落盘词时的处理方式 */
-@Serializable
-enum class ZeroHitPolicy {
-    /** 保留最后完成的那一条 */
-    KEEP_LAST_COMPLETED,
-
-    /** 全部丢弃，对话保持原样 */
-    DISCARD_ALL,
-
-    /** 全部落盘，交给用户自己挑 */
-    COMMIT_ALL,
-}
-
 /** 落盘时把这一路的内容放到哪里 */
 @Serializable
 enum class CommitTarget {
@@ -70,7 +57,6 @@ data class BatchRegenerationConfig(
     /** 只在正文里匹配的重 roll 词；为空表示不按正文重 roll */
     val rerollTextKeywords: List<String> = emptyList(),
     val commitScope: KeywordScope = KeywordScope.TEXT_AND_REASONING,
-    val zeroHitPolicy: ZeroHitPolicy = ZeroHitPolicy.KEEP_LAST_COMPLETED,
     val ignoreCase: Boolean = true,
 ) {
     /** 有任意一组重 roll 词需要实时检测 */

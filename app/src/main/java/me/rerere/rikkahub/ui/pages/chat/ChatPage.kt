@@ -335,6 +335,16 @@ private fun ChatPageContent(
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
+
+    // 全文索引后台重建完成后提示一次
+    val indexNotice by vm.indexRebuildNotice.collectAsStateWithLifecycle()
+    LaunchedEffect(indexNotice) {
+        indexNotice?.let {
+            toaster.show(it, type = ToastType.Info)
+            vm.consumeIndexRebuildNotice()
+        }
+    }
+
     val workspaceRepository: WorkspaceRepository = koinInject()
 
     var previewMode by rememberSaveable { mutableStateOf(false) }

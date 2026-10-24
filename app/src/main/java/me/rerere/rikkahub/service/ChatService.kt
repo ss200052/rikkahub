@@ -168,6 +168,14 @@ class ChatService(
 
     val batchSession: StateFlow<BatchSession?> = batchController.session
 
+    // 索引重建完成后的提示，UI 消费一次后清空
+    private val _indexRebuildNotice = MutableStateFlow<String?>(null)
+    val indexRebuildNotice: StateFlow<String?> = _indexRebuildNotice.asStateFlow()
+
+    fun consumeIndexRebuildNotice() {
+        _indexRebuildNotice.value = null
+    }
+
     init {
         // 索引内容升级（现在也收思维链）后补建一次全文索引，失败就下次启动再试
         appScope.launch {
@@ -177,6 +185,7 @@ class ChatService(
                     Log.i(TAG, "init: rebuilding full text index")
                     conversationRepo.rebuildAllIndexes()
                     settingsStore.update { it.copy(ftsSchemaVersion = FTS_SCHEMA_VERSION) }
+                    _indexRebuildNotice.value = "搜索索引已重建，现在能搜到思维链里的内容了"
                 }
             }.onFailure { Log.w(TAG, "init: rebuild full text index failed", it) }
         }
@@ -572,6 +581,18 @@ class ChatService(
         if (batchController.isRunning) {
             addError(
                 IllegalStateException("已有一个批量任务在运行"),
+                conversationId,
+            )
+            return
+        }
+
+        // 常规生成还在跑时不能起批量：两边都会写同一条消息，状态会打架
+        val runningSession = sessionManager.get(conversationId)
+        if (runningSession?.getJob() != null ||
+            runningSession?.state?.value?.isAwaitingToolApproval == true
+        ) {
+            addError(
+                IllegalStateException("请先停止当前的生成，再发起批量重新生成"),
                 conversationId,
             )
             return

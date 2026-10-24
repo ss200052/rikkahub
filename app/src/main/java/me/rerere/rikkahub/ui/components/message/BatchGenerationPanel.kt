@@ -165,10 +165,16 @@ private fun LaneTile(
             )
 
             state.detailLabel()?.let { detail ->
+                // 重 roll 次数异常多时标红，提醒关键词可能配得太严
+                val tooManyRerolls = state is LaneState.Running && state.rerollCount >= 10
                 Text(
                     text = detail,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (tooManyRerolls) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )

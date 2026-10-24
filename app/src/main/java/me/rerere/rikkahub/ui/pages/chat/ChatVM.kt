@@ -279,6 +279,11 @@ class ChatVM(
 
     val batchSession: StateFlow<BatchSession?> = chatService.batchSession
 
+    /** 全文索引重建完成的一次性提示 */
+    val indexRebuildNotice: StateFlow<String?> = chatService.indexRebuildNotice
+
+    fun consumeIndexRebuildNotice() = chatService.consumeIndexRebuildNotice()
+
     val isBatchLocked: Boolean
         get() = chatService.isBatchLocked(_conversationId)
 
