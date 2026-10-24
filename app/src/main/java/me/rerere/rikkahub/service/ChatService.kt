@@ -640,10 +640,25 @@ class ChatService(
     fun stopBatchAll() = batchController.stopAll()
 
     /** 重跑某一路（失败、截断都能再来一次） */
-    fun rerunBatchLane(index: Int) = batchController.rerunLane(index)
+    /** 重跑某一路（失败、截断都能再来一次）；同样挂前台服务，切后台不会被系统回收 */
+    fun rerunBatchLane(index: Int) {
+        val session = batchController.session.value ?: return
+        val conversationId = Uuid.parse(session.conversationId)
+        launchGenerationJob(conversationId = conversationId) {
+            batchController.rerunLane(index)
+            batchController.session.first { it == null || it.finished }
+        }.start()
+    }
 
     /** 重跑所有失败的路线 */
-    fun rerunBatchFailedLanes() = batchController.rerunFailedLanes()
+    fun rerunBatchFailedLanes() {
+        val session = batchController.session.value ?: return
+        val conversationId = Uuid.parse(session.conversationId)
+        launchGenerationJob(conversationId = conversationId) {
+            batchController.rerunFailedLanes()
+            batchController.session.first { it == null || it.finished }
+        }.start()
+    }
 
     fun unlockBatch() = batchController.unlock()
 
