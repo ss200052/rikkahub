@@ -294,6 +294,7 @@ class BatchGenerationController(
             // 这个判断必须排在「未命中也重 roll」之前，否则会把好结果丢掉。
             if (commitHit != null) {
                 publish(index, LaneState.Hit(index, message, commitHit))
+                bumpTotalHits()
                 // 通知给 ChatService：后台时弹通知栏
                 _laneHits.tryEmit(
                     LaneHitEvent(
@@ -331,5 +332,10 @@ class BatchGenerationController(
     /** 整批累计重 roll 次数 +1，用于工作台顶部的总览 */
     private fun bumpTotalRerolls() {
         _session.update { it?.copy(totalRerolls = it.totalRerolls + 1) }
+    }
+
+    /** 整批累计命中次数 +1 */
+    private fun bumpTotalHits() {
+        _session.update { it?.copy(totalHits = it.totalHits + 1) }
     }
 }

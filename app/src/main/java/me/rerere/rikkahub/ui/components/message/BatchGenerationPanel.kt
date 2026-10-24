@@ -202,6 +202,7 @@ private fun summary(session: BatchSession): String {
     val parts = mutableListOf<String>()
     if (session.finished) parts += "已全部结束" else parts += "进行中 ${session.finishedCount}/$total"
     parts += "命中 ${session.hitCount}"
+    if (session.totalHits > 0) parts += "累计命中 ${session.totalHits} 次"
     parts += "重 roll ${session.totalRerolls} 次"
     if (session.commits.isNotEmpty()) parts += "已落盘 ${session.commits.size}"
     return parts.joinToString(" · ")
