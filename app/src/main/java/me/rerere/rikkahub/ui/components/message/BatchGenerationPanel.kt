@@ -62,6 +62,8 @@ fun BatchGenerationPanel(
     notifyOnHit: Boolean = true,
     onToggleNotify: (Boolean) -> Unit = {},
 ) {
+    var confirmUnlock by remember { mutableStateOf(false) }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = MaterialTheme.shapes.extraLarge,
@@ -136,7 +138,7 @@ fun BatchGenerationPanel(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (session.locked) {
-                        OutlinedButton(onClick = onUnlock) { Text("解锁对话") }
+                        OutlinedButton(onClick = { confirmUnlock = true }) { Text("解锁对话") }
                         Text(
                             text = "解锁前该对话不能编辑、删除或继续生成",
                             style = MaterialTheme.typography.labelSmall,
@@ -145,7 +147,7 @@ fun BatchGenerationPanel(
                         )
                     } else {
                         Text(
-                            text = "已解锁，格子里未落盘的内容仍然保留",
+                            text = "已解锁",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
@@ -155,6 +157,41 @@ fun BatchGenerationPanel(
                 }
             }
         }
+    }
+
+    // 解锁会清空格子，先确认一次
+    if (confirmUnlock) {
+        AlertDialog(
+            onDismissRequest = { confirmUnlock = false },
+            title = { Text("解锁对话") },
+            text = {
+                Text(
+                    buildString {
+                        val running = session.lanes.count { it is LaneState.Running }
+                        if (running > 0) {
+                            append("还有 $running 路正在生成，解锁会先停止它们。")
+                            appendLine()
+                        }
+                        append("解锁后所有格子都会被清空，未落盘的结果会丢失。")
+                        if (session.commits.isNotEmpty()) {
+                            appendLine()
+                            append("已经落盘到对话里的 ${session.commits.size} 处内容不受影响。")
+                        }
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmUnlock = false
+                        onUnlock()
+                    },
+                ) { Text("解锁并清空") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnlock = false }) { Text("取消") }
+            },
+        )
     }
 }
 
