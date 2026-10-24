@@ -14,8 +14,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -217,12 +219,12 @@ private fun LaneTile(
     val inspectable = state.isInspectable
     val accent = state.accentColor()
     var confirmRerun by remember(state.index) { mutableStateOf(false) }
+    // 次要文字跟随卡片底色，换配色时不用逐个改
+    val secondary = LocalContentColor.current.copy(alpha = 0.72f)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ),
+        colors = state.tileColors(),
         onClick = { if (inspectable) onInspect() },
         enabled = inspectable,
     ) {
@@ -251,7 +253,7 @@ private fun LaneTile(
                     color = if (tooManyRerolls) {
                         MaterialTheme.colorScheme.error
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        secondary
                     },
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
@@ -262,7 +264,7 @@ private fun LaneTile(
                 Text(
                     text = "已落盘 ${commits.size} 处" + commits.joinToString("") { " · " + it.target.shortLabel() },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = accent,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -381,11 +383,32 @@ private fun LaneState.resultOrNull() = when (this) {
     else -> null
 }
 
+/** 卡片底色按状态区分：命中用主题色底，失败用错误色底，其余保持中性 */
+@Composable
+private fun LaneState.tileColors(): CardColors = when (this) {
+    is LaneState.Hit -> CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+    )
+
+    is LaneState.Failed -> CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.errorContainer,
+    )
+
+    is LaneState.Truncated -> CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+    )
+
+    else -> CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    )
+}
+
 @Composable
 private fun LaneState.accentColor(): Color = when (this) {
-    is LaneState.Hit -> MaterialTheme.colorScheme.primary
-    is LaneState.Truncated -> MaterialTheme.colorScheme.error
-    is LaneState.Failed -> MaterialTheme.colorScheme.error
+    // 底色换成容器色后，强调色要用配套的 on* 才能保证对比度
+    is LaneState.Hit -> MaterialTheme.colorScheme.onPrimaryContainer
+    is LaneState.Truncated -> MaterialTheme.colorScheme.onTertiaryContainer
+    is LaneState.Failed -> MaterialTheme.colorScheme.onErrorContainer
     is LaneState.Running -> MaterialTheme.colorScheme.tertiary
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
