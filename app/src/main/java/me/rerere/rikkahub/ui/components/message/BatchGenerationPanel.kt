@@ -3,13 +3,16 @@ package me.rerere.rikkahub.ui.components.message
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -19,11 +22,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import me.rerere.rikkahub.data.batch.BatchSession
 import me.rerere.rikkahub.data.batch.CommitTarget
@@ -77,15 +85,17 @@ fun BatchGenerationPanel(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
 
-                FlowRow(
+                // 一行固定两个格子，宽度随屏幕自适应
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(0.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .heightIn(max = 420.dp),
                 ) {
-                    session.lanes.forEach { lane ->
+                    items(session.lanes, key = { it.index }) { lane ->
                         LaneTile(
                             state = lane,
                             commits = session.commits.filter { it.laneIndex == lane.index },
@@ -146,16 +156,17 @@ private fun LaneTile(
 ) {
     val inspectable = state.isInspectable
     val accent = state.accentColor()
+    var confirmRerun by remember(state.index) { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier.width(158.dp),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
         onClick = { if (inspectable) onInspect() },
         enabled = inspectable,
     ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "路 ${state.index + 1}",
@@ -197,23 +208,70 @@ private fun LaneTile(
                 )
             }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            // 三个动作放在一行里尽量紧凑，放不下就自动换行
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+                itemVerticalAlignment = Alignment.CenterVertically,
             ) {
                 if (state is LaneState.Running) {
-                    TextButton(onClick = onStop) { Text("停止", style = MaterialTheme.typography.labelSmall) }
+                    CompactAction("停止", onStop)
                 }
                 if (state !is LaneState.Running && state !is LaneState.Idle) {
                     // 任何终态都能重跑：失败、截断、或者对结果不满意
-                    TextButton(onClick = onRerun) { Text("重跑", style = MaterialTheme.typography.labelSmall) }
+                    CompactAction("重跑", { confirmRerun = true })
                 }
                 if (inspectable) {
-                    TextButton(onClick = onInspect) { Text("查看", style = MaterialTheme.typography.labelSmall) }
-                    TextButton(onClick = onCommit) { Text("落盘", style = MaterialTheme.typography.labelSmall) }
+                    CompactAction("查看", onInspect)
+                    CompactAction("落盘", onCommit)
                 }
             }
         }
+    }
+
+    // 重跑会丢弃这一路当前的内容，先确认一次
+    if (confirmRerun) {
+        AlertDialog(
+            onDismissRequest = { confirmRerun = false },
+            title = { Text("重跑 路 ${state.index + 1}") },
+            text = {
+                Text(
+                    if (commits.isEmpty()) {
+                        "这一路当前的内容会被丢弃，重新生成一次。"
+                    } else {
+                        "这一路当前的内容会被丢弃，重新生成一次。已经落盘到对话里的内容不受影响。"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRerun = false
+                        onRerun()
+                    },
+                ) { Text("重跑") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRerun = false }) { Text("取消") }
+            },
+        )
+    }
+}
+
+/** 紧凑的小按钮：去掉默认的大内边距，字也小一号 */
+@Composable
+private fun CompactAction(text: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+        modifier = Modifier.height(26.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 11.sp,
+            maxLines = 1,
+        )
     }
 }
 
