@@ -48,6 +48,8 @@ fun BatchGenerationPanel(
     onDismiss: () -> Unit,
     onInspect: (Int) -> Unit,
     onCommit: (Int) -> Unit,
+    onRerunLane: (Int) -> Unit = {},
+    onRerunFailed: () -> Unit = {},
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -68,6 +70,9 @@ fun BatchGenerationPanel(
                     if (!session.finished) {
                         TextButton(onClick = onStopAll) { Text("全部停止") }
                     }
+                    if (session.lanes.any { it is me.rerere.rikkahub.data.batch.LaneState.Failed }) {
+                        TextButton(onClick = onRerunFailed) { Text("重跑全部失败") }
+                    }
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
@@ -87,6 +92,7 @@ fun BatchGenerationPanel(
                             onStop = { onStopLane(lane.index) },
                             onInspect = { onInspect(lane.index) },
                             onCommit = { onCommit(lane.index) },
+                            onRerun = { onRerunLane(lane.index) },
                         )
                     }
                 }
@@ -136,6 +142,7 @@ private fun LaneTile(
     onStop: () -> Unit,
     onInspect: () -> Unit,
     onCommit: () -> Unit,
+    onRerun: () -> Unit,
 ) {
     val inspectable = state.isInspectable
     val accent = state.accentColor()
@@ -196,6 +203,10 @@ private fun LaneTile(
             ) {
                 if (state is LaneState.Running) {
                     TextButton(onClick = onStop) { Text("停止", style = MaterialTheme.typography.labelSmall) }
+                }
+                if (state !is LaneState.Running && state !is LaneState.Idle) {
+                    // 任何终态都能重跑：失败、截断、或者对结果不满意
+                    TextButton(onClick = onRerun) { Text("重跑", style = MaterialTheme.typography.labelSmall) }
                 }
                 if (inspectable) {
                     TextButton(onClick = onInspect) { Text("查看", style = MaterialTheme.typography.labelSmall) }

@@ -576,6 +576,8 @@ private fun ChatPageContent(
                     onDismiss = { showBatchPanel = false },
                     onInspect = { batchInspect = it },
                     onCommit = { batchCommit = it },
+                    onRerunLane = { vm.rerunBatchLane(it) },
+                    onRerunFailed = { vm.rerunBatchFailedLanes() },
                 )
             }
 

@@ -182,11 +182,10 @@ data class BatchSession(
     val finishedCount: Int get() = lanes.count { it.isInspectable }
     val hitCount: Int get() = lanes.count { it is LaneState.Hit }
 
-    /** 全部路都进入终态时批量任务结束 */
+    /** 写入某一路的最新状态；重跑某一路会让整批重新回到未完成状态 */
     fun withLane(state: LaneState): BatchSession {
         val updated = lanes.toMutableList().also { it[state.index] = state }
-        val allSettled = updated.all { it.isInspectable }
-        return copy(lanes = updated, finished = finished || allSettled)
+        return copy(lanes = updated, finished = updated.all { it.isInspectable })
     }
 }
 

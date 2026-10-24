@@ -303,6 +303,10 @@ class ChatVM(
 
     fun stopBatchAll() = chatService.stopBatchAll()
 
+    fun rerunBatchLane(index: Int) = chatService.rerunBatchLane(index)
+
+    fun rerunBatchFailedLanes() = chatService.rerunBatchFailedLanes()
+
     fun unlockBatch() = chatService.unlockBatch()
 
     fun discardBatch() = chatService.discardBatch()

@@ -75,6 +75,9 @@ class BatchGenerationController(
     private var batchJob: Job? = null
     private val laneJobs = mutableMapOf<Int, Job>()
 
+    /** 重新发起一路所需的工厂；start 时记下来，供「重跑」使用 */
+    private var laneFactory: (() -> Pair<AgentRequest, AgentHooks>)? = null
+
     /** 是否有批量任务正在跑（全部路都已进入终态就为 false） */
     val isRunning: Boolean
         get() = _session.value?.let { !it.finished } == true
@@ -104,6 +107,8 @@ class BatchGenerationController(
             lanes = List(config.parallelCount) { LaneState.Idle(it) },
         )
         laneJobs.clear()
+        // 记住重新发起某一路的方式，供「重跑」使用
+        laneFactory = newAgent
 
         batchJob = appScope.launch(Dispatchers.IO) {
             try {
@@ -128,6 +133,36 @@ class BatchGenerationController(
     fun stopLane(index: Int) {
         laneJobs[index]?.cancel()
     }
+
+    /**
+     * 重跑某一路：失败、被截断、或者对结果不满意都可以重来。
+     * 已经在跑的路忽略；重跑期间整批重新回到「未完成」，前台服务和对话锁也随之恢复。
+     */
+    fun rerunLane(index: Int) {
+        val factory = laneFactory ?: return
+        val current = _session.value ?: return
+        val lane = current.lane(index) ?: return
+        if (!lane.isInspectable) return
+
+        laneJobs[index]?.cancel()
+        publish(index, LaneState.Running(index, attempt = 1, rerollCount = 0))
+
+        laneJobs[index] = appScope.launch(Dispatchers.IO) {
+            runLane(index, current.config, factory)
+        }
+    }
+
+    /** 重跑所有失败的路；没有失败时什么也不做 */
+    fun rerunFailedLanes() {
+        val current = _session.value ?: return
+        current.lanes
+            .filterIsInstance<LaneState.Failed>()
+            .forEach { rerunLane(it.index) }
+    }
+
+    /** 是否有需要重跑的失败路 */
+    val hasFailedLanes: Boolean
+        get() = _session.value?.lanes?.any { it is LaneState.Failed } == true
 
     /** 停止全部路 */
     fun stopAll() {

@@ -639,6 +639,12 @@ class ChatService(
 
     fun stopBatchAll() = batchController.stopAll()
 
+    /** 重跑某一路（失败、截断都能再来一次） */
+    fun rerunBatchLane(index: Int) = batchController.rerunLane(index)
+
+    /** 重跑所有失败的路线 */
+    fun rerunBatchFailedLanes() = batchController.rerunFailedLanes()
+
     fun unlockBatch() = batchController.unlock()
 
     /** 关闭面板：停止并清空工作台，已落盘的内容不受影响 */
