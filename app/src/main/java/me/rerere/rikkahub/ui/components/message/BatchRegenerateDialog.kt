@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import kotlin.math.roundToInt
@@ -45,6 +48,8 @@ fun BatchRegenerateDialog(
     var commitKeywords by remember { mutableStateOf(initial.commitKeywords) }
     var reasoningKeywords by remember { mutableStateOf(initial.rerollReasoningKeywords) }
     var textKeywords by remember { mutableStateOf(initial.rerollTextKeywords) }
+    var rerollLimit by remember { mutableStateOf(initial.maxRerollsPerLane) }
+    var rerollOnNoHit by remember { mutableStateOf(initial.rerollOnNoHit) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -96,10 +101,38 @@ fun BatchRegenerateDialog(
 
                 HorizontalDivider()
 
+                // ---- 重 roll 轮次 ----
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = if (rerollLimit <= 0) "" else rerollLimit.toString(),
+                        onValueChange = { input ->
+                            rerollLimit = input.filter { it.isDigit() }.take(4).toIntOrNull() ?: 0
+                        },
+                        label = { Text("重 roll 轮次（0 = 不限）") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "未命中关键词也重 roll",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = rerollOnNoHit,
+                        onCheckedChange = { rerollOnNoHit = it },
+                    )
+                }
+
+                HorizontalDivider()
+
                 // ---- 成本提示 ----
                 Text(
                     text = "落盘由你手动点选，命中落盘词只会标记、不会自动写入对话。" +
-                        "重 roll 不设上限，靠面板里的停止按钮兜底。",
+                        "轮次填 0 表示不限，靠面板里的停止按钮兜底。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -114,6 +147,8 @@ fun BatchRegenerateDialog(
                             commitKeywords = commitKeywords,
                             rerollReasoningKeywords = reasoningKeywords,
                             rerollTextKeywords = textKeywords,
+                            maxRerollsPerLane = rerollLimit,
+                            rerollOnNoHit = rerollOnNoHit,
                         ),
                     )
                 },

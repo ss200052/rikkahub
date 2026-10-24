@@ -111,9 +111,9 @@ class BatchGenerationController(
         _session.value = null
     }
 
-    /** 用户点击解锁 */
+    /** 解锁即结束这批结果：停止未完成的路、清空格子，不再缓存，也不会在下次进入对话时弹面板 */
     fun unlock() {
-        _session.update { it?.copy(locked = false) }
+        discard()
     }
 
     /** 记录一次落盘，用于在格子上显示「已落盘至」 */
@@ -137,6 +137,7 @@ class BatchGenerationController(
 
         while (true) {
             var latest: UIMessage? = null
+            var hit: KeywordHit? = null
             try {
                 val (request, hooks) = newAgent()
                 runAgent(request, hooks).flowOn(Dispatchers.IO).collect { event ->
@@ -154,12 +155,7 @@ class BatchGenerationController(
                     }
                 }
             } catch (signal: LaneRerollSignal) {
-                // 本轮作废，路数不变，同一路重新来
-                rerollCount++
-                lastHit = signal.hit
-                attempt++
-                publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
-                continue
+                hit = signal.hit
             } catch (e: CancellationException) {
                 publish(index, LaneState.Cancelled(index, latest))
                 throw e
@@ -168,21 +164,47 @@ class BatchGenerationController(
                 return
             }
 
+            // 轮次上限：0 表示不设限，只能靠手动停止
+            val limit = config.maxRerollsPerLane
+            val reachedLimit = limit > 0 && rerollCount >= limit
+
+            if (hit != null) {
+                // 命中重 roll 词：还有额度就重来，额度用完就保留这轮被截断的内容
+                if (reachedLimit) {
+                    publish(index, LaneState.Truncated(index, latest, attempt, hit))
+                    return
+                }
+                rerollCount++
+                lastHit = hit
+                attempt++
+                publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
+                continue
+            }
+
             val message = latest
             if (message == null) {
                 publish(index, LaneState.Failed(index, "no message produced"))
                 return
             }
 
-            // 落盘词在跑完之后才判定，为空表示全部标记为命中
-            val hit = config.commitKeywords.isEmpty() || config.commitKeywords.firstKeywordIn(
+            // 开关打开时，即使这轮没命中重 roll 词也继续重来，直到跑满轮次
+            if (config.rerollOnNoHit && !reachedLimit) {
+                rerollCount++
+                lastHit = null
+                attempt++
+                publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
+                continue
+            }
+
+            // 落盘词只做标记：配了才判定，没配就一律不算命中
+            val commitHit = config.commitKeywords.isNotEmpty() && config.commitKeywords.firstKeywordIn(
                 text = message.batchScanText(config.commitScope),
                 ignoreCase = config.ignoreCase,
             ) != null
 
             publish(
                 index,
-                if (hit) LaneState.Hit(index, message) else LaneState.Clean(index, message),
+                if (commitHit) LaneState.Hit(index, message) else LaneState.Clean(index, message),
             )
             return
         }

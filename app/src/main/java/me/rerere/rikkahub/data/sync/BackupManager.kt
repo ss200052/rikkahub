@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.sync
 
 import android.content.Context
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -128,7 +129,11 @@ class BackupManager(
                         // Reject unsupported schemas before publishing; run supported old migrations on the copy.
                         val room = AppDatabaseFactory.create(context, stagedDatabase.absolutePath)
                         try {
-                            DatabaseBackup.checkpoint(room.openHelper.writableDatabase)
+                            val writableDatabase = room.openHelper.writableDatabase
+                            // 换了包名（比如装成另一个 applicationId）时，备份里的绝对路径还指向旧安装目录，
+                            // 文件其实已经恢复过来了却显示不出来，这里统一改写成当前安装的 filesDir
+                            rewriteStagedLocalFileUrls(writableDatabase, context.filesDir)
+                            DatabaseBackup.checkpoint(writableDatabase)
                         } finally {
                             room.close()
                         }
@@ -138,10 +143,12 @@ class BackupManager(
                     val settingsFile = File(staging, "settings.json")
                     if (settingsFile.exists()) {
                         val migrated = SettingsJsonMigrator.migrate(settingsFile.readText())
-                        val settings = json.decodeFromString<Settings>(migrated)
+                        // 头像等本地文件引用同样要跟着改
+                        val rewritten = rewriteLocalFileUrls(migrated, context.filesDir)
+                        val settings = json.decodeFromString<Settings>(rewritten)
                         require(!settings.init) { "Backup contains uninitialized settings" }
                         // Persist the migrated value once, including generated IDs, for restart/retry consistency.
-                        PendingRestore.writeDurably(settingsFile, json.encodeSettings(settings, json.launchCountOf(migrated)))
+                        PendingRestore.writeDurably(settingsFile, json.encodeSettings(settings, json.launchCountOf(rewritten)))
                     }
                     currentCoroutineContext().ensureActive()
                     restore.publish(staging)
@@ -175,6 +182,47 @@ class BackupManager(
 
         // 启动次数不在 Settings 里，备份文件里仍放在 settings.json 的这个字段，和旧备份保持一致
         private const val LAUNCH_COUNT_KEY = "launchCount"
+
+        /** 备份里的本地文件引用形如 file:///data/user/0/<旧包名>/files/<相对路径> */
+        private val LOCAL_FILE_URL = Regex("""file:///[^"\\]*?/files/([^"\\]+)""")
+
+        /**
+         * 把绝对路径的本地文件引用改写为当前安装的 filesDir。
+         *
+         * 从另一个包名（例如官方版）导入备份时，旧路径指向的目录在本安装里并不存在，
+         * 文件明明随备份恢复到了新目录，界面上却加载不出来。同包名导入时该改写是幂等的。
+         */
+        private fun rewriteLocalFileUrls(text: String, filesDir: File): String {
+            if (!text.contains("file://")) return text
+            val base = "file://${filesDir.absolutePath}"
+            return LOCAL_FILE_URL.replace(text) { match -> "$base/${match.groupValues[1]}" }
+        }
+
+        /** 改写暂存数据库里所有消息的本地文件引用 */
+        private fun rewriteStagedLocalFileUrls(database: SupportSQLiteDatabase, filesDir: File) {
+            val updates = mutableListOf<Pair<String, String>>()
+            database.query("SELECT id, messages FROM message_node").use { cursor ->
+                while (cursor.moveToNext()) {
+                    val nodeId = cursor.getString(0) ?: continue
+                    val messages = cursor.getString(1) ?: continue
+                    val rewritten = rewriteLocalFileUrls(messages, filesDir)
+                    if (rewritten != messages) updates.add(nodeId to rewritten)
+                }
+            }
+            if (updates.isEmpty()) return
+            database.beginTransaction()
+            try {
+                updates.forEach { (nodeId, messages) ->
+                    database.execSQL(
+                        "UPDATE message_node SET messages = ? WHERE id = ?",
+                        arrayOf(messages, nodeId),
+                    )
+                }
+                database.setTransactionSuccessful()
+            } finally {
+                database.endTransaction()
+            }
+        }
 
         private fun Json.encodeSettings(settings: Settings, launchCount: Int): String {
             val fields = encodeToJsonElement(settings).jsonObject + (LAUNCH_COUNT_KEY to JsonPrimitive(launchCount))

@@ -58,6 +58,10 @@ data class BatchRegenerationConfig(
     val rerollTextKeywords: List<String> = emptyList(),
     val commitScope: KeywordScope = KeywordScope.TEXT_AND_REASONING,
     val ignoreCase: Boolean = true,
+    /** 单路最多重 roll 几次；0 表示不设限，只能靠手动停止 */
+    val maxRerollsPerLane: Int = 5,
+    /** 打开后即使本轮没命中重 roll 词也继续重来，直到跑满轮次 */
+    val rerollOnNoHit: Boolean = false,
 ) {
     /** 有任意一组重 roll 词需要实时检测 */
     val hasRerollKeywords: Boolean
@@ -79,6 +83,7 @@ internal fun BatchRegenerationConfig.normalized(): BatchRegenerationConfig = cop
     commitKeywords = commitKeywords.normalizedKeywords(),
     rerollReasoningKeywords = rerollReasoningKeywords.normalizedKeywords(),
     rerollTextKeywords = rerollTextKeywords.normalizedKeywords(),
+    maxRerollsPerLane = maxRerollsPerLane.coerceAtLeast(0),
 )
 
 /** 单条路的状态 */

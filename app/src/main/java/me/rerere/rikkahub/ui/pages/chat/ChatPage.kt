@@ -497,7 +497,12 @@ private fun ChatPageContent(
                     vm.regenerateAtMessage(it)
                 },
                 onBatchRegenerate = { target ->
-                    batchTarget = target
+                    // 已有未处理的批量结果时直接打开工作台，不再弹一次配置窗
+                    if (batchSession != null) {
+                        showBatchPanel = true
+                    } else {
+                        batchTarget = target
+                    }
                 },
                 onEdit = {
                     inputState.editingMessage = it.id
