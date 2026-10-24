@@ -180,8 +180,21 @@ class BatchGenerationController(
     val hasFailedLanes: Boolean
         get() = _session.value?.lanes?.any { it is LaneState.Failed } == true
 
-    /** 停止全部路 */
+    /**
+     * 停止全部路。
+     *
+     * 先把还在跑的路就地标成已停止，界面立刻有反馈；再取消协程——
+     * 取消是异步的，等它自己收尾的话，格子会在一小段时间里仍然显示「运行中」。
+     * 被取消的协程随后会再写一次带内容的 Cancelled，覆盖这里的占位。
+     */
     fun stopAll() {
+        _session.update { current ->
+            if (current == null) return@update current
+            val settled = current.lanes.map { lane ->
+                if (lane is LaneState.Running) LaneState.Cancelled(lane.index, null) else lane
+            }
+            current.copy(lanes = settled, finished = settled.all { it.isInspectable })
+        }
         batchJob?.cancel()
         // 重跑启动的 job 不在 batchJob 层级里，单独停
         laneJobs.values.forEach { it.cancel() }
