@@ -269,6 +269,7 @@ class BatchGenerationController(
                 rerollCount++
                 lastHit = hit
                 attempt++
+                bumpTotalRerolls()
                 publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
                 continue
             }
@@ -294,6 +295,7 @@ class BatchGenerationController(
                 rerollCount++
                 lastHit = null
                 attempt++
+                bumpTotalRerolls()
                 publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
                 continue
             }
@@ -308,5 +310,10 @@ class BatchGenerationController(
             if (current == null || index !in current.lanes.indices) current
             else current.withLane(state)
         }
+    }
+
+    /** 整批累计重 roll 次数 +1，用于工作台顶部的总览 */
+    private fun bumpTotalRerolls() {
+        _session.update { it?.copy(totalRerolls = it.totalRerolls + 1) }
     }
 }

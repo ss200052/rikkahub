@@ -172,6 +172,8 @@ data class BatchSession(
     val lanes: List<LaneState>,
     /** 所有路都已进入终态 */
     val finished: Boolean = false,
+    /** 整批累计重 roll 次数（含已跑完的路，重跑不清零） */
+    val totalRerolls: Int = 0,
     /** 用户手动解锁前一直为 true */
     val locked: Boolean = true,
     val commits: List<LaneCommitRecord> = emptyList(),
