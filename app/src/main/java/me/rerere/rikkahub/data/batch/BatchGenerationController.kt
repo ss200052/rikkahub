@@ -279,7 +279,17 @@ class BatchGenerationController(
                 return
             }
 
-            // 开关打开时，即使这轮没命中重 roll 词也继续重来，直到跑满轮次
+            // 落盘词只做标记：配了才判定，没配就一律不算命中
+            val commitHit = config.findCommitHit(message)
+
+            // 已经命中落盘词 = 这轮就是要的结果，直接收下，不再重来。
+            // 这个判断必须排在「未命中也重 roll」之前，否则会把好结果丢掉。
+            if (commitHit != null) {
+                publish(index, LaneState.Hit(index, message, commitHit))
+                return
+            }
+
+            // 没命中落盘词、开关打开：继续重来，直到跑满轮次
             if (config.rerollOnNoHit && !reachedLimit) {
                 rerollCount++
                 lastHit = null
@@ -288,17 +298,7 @@ class BatchGenerationController(
                 continue
             }
 
-            // 落盘词只做标记：配了才判定，没配就一律不算命中
-            val commitHit = config.findCommitHit(message)
-
-            publish(
-                index,
-                if (commitHit != null) {
-                    LaneState.Hit(index, message, commitHit)
-                } else {
-                    LaneState.Clean(index, message)
-                },
-            )
+            publish(index, LaneState.Clean(index, message))
             return
         }
     }
