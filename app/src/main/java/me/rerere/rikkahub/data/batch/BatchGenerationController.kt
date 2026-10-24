@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,36 @@ import me.rerere.ai.agent.AgentRequest
 import me.rerere.ai.agent.runAgent
 import me.rerere.ai.ui.UIMessage
 import kotlin.uuid.Uuid
+
+/** 被服务端限流时最多退避重试几次 */
+private const val MAX_RATE_LIMIT_RETRIES = 5
+
+/** 首次退避 2 秒，之后每次翻倍（2/4/8/16/32 秒） */
+private const val RATE_LIMIT_BASE_DELAY_MS = 2_000L
+
+/**
+ * 判断异常是否表示被服务端限流。
+ *
+ * provider 会把响应体原样透传上来（例如 `429 too many requests`），
+ * 而 ai 模块里没有对应的错误类型，只能按文本识别；顺带兼容常见的限流措辞。
+ */
+private fun Throwable.isRateLimited(): Boolean {
+    var current: Throwable? = this
+    var depth = 0
+    while (current != null && depth < 8) {
+        val text = current.message?.lowercase().orEmpty()
+        if (text.contains("429") ||
+            text.contains("too many request") ||
+            text.contains("rate limit") ||
+            text.contains("concurrent")
+        ) {
+            return true
+        }
+        current = current.cause
+        depth++
+    }
+    return false
+}
 
 /**
  * 批量重新生成的编排器。
@@ -132,6 +163,8 @@ class BatchGenerationController(
         var attempt = 1
         var rerollCount = 0
         var lastHit: KeywordHit? = null
+        var rateLimitRetries = 0
+        var rateLimitHits = 0
 
         publish(index, LaneState.Running(index, attempt, rerollCount, lastHit))
 
@@ -160,7 +193,31 @@ class BatchGenerationController(
                 publish(index, LaneState.Cancelled(index, latest))
                 throw e
             } catch (e: Exception) {
-                publish(index, LaneState.Failed(index, e.message ?: e.javaClass.simpleName))
+                // 被服务端限流（429 / too many requests）时先退避重试，而不是直接把这路判死
+                if (e.isRateLimited() && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+                    rateLimitRetries++
+                    val waitMs = RATE_LIMIT_BASE_DELAY_MS shl (rateLimitRetries - 1)
+                    val waitSeconds = (waitMs / 1000).toInt()
+                    publish(
+                        index,
+                        LaneState.Running(index, attempt, rerollCount, lastHit, waitSeconds),
+                    )
+                    delay(waitMs)
+                    attempt++
+                    rateLimitHits++
+                    continue
+                }
+                publish(
+                    index,
+                    LaneState.Failed(
+                        index,
+                        if (rateLimitHits > 0) {
+                            "被限流重试 $rateLimitHits 次仍失败：${e.message ?: e.javaClass.simpleName}"
+                        } else {
+                            e.message ?: e.javaClass.simpleName
+                        },
+                    ),
+                )
                 return
             }
 

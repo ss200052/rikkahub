@@ -102,6 +102,8 @@ sealed interface LaneState {
         val attempt: Int,
         val rerollCount: Int,
         val lastHit: KeywordHit? = null,
+        /** 被服务端限流后正在退避等待的秒数，null 表示正在正常生成 */
+        val waitingSeconds: Int? = null,
     ) : LaneState
 
     /** 跑完且命中落盘词；[hit] 记录命中的词和位置，方便在格子上核对 */

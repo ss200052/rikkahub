@@ -208,7 +208,8 @@ private fun LaneTile(
 
 private fun LaneState.statusLabel(): String = when (this) {
     is LaneState.Idle -> "等待开始"
-    is LaneState.Running -> "运行中 · 第 $attempt 轮"
+    is LaneState.Running ->
+        if (waitingSeconds != null) "限流等待 ${waitingSeconds}s" else "运行中 · 第 $attempt 轮"
     is LaneState.Hit -> "命中落盘词"
     is LaneState.Clean -> "完成 · 未命中"
     is LaneState.Truncated -> "未完成 · 被截断"
@@ -222,6 +223,10 @@ private fun LaneState.detailLabel(): String? = when (this) {
         lastHit?.let {
             if (isNotEmpty()) append(" · ")
             append("命中${if (it.source == KeywordSource.REASONING) "思考" else "正文"}：${it.keyword}")
+        }
+        if (waitingSeconds != null) {
+            if (isNotEmpty()) append(" · ")
+            append("服务端限流，${waitingSeconds} 秒后自动重试")
         }
     }.ifEmpty { null }
 
