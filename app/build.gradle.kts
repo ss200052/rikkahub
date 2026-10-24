@@ -23,7 +23,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = "me.rerere.rikkahub"
+        // 与官方包名区分开，才能和已安装的旧版共存、各自使用独立数据库
+        applicationId = "me.rerere.rikkahub.mine"
         minSdk = 26
         targetSdk = 37
         versionCode = 193
