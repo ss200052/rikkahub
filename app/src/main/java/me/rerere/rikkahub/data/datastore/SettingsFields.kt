@@ -147,6 +147,19 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
 
         // 赞助提醒
         plain(SPONSOR_ALERT_DISMISSED_AT, Settings::sponsorAlertDismissedAt) { copy(sponsorAlertDismissedAt = it) },
+
+        // 批量重新生成
+        json(BATCH_REGENERATION, Settings::batchRegeneration) { copy(batchRegeneration = it) },
+        plain(NOTIFY_BATCH_HIT_IN_BACKGROUND, Settings::notifyBatchHitInBackground) {
+            copy(notifyBatchHitInBackground = it)
+        },
+
+        // 全文索引结构版本
+        plain(FTS_SCHEMA_VERSION, Settings::ftsSchemaVersion) { copy(ftsSchemaVersion = it) },
+
+        // 提示词改写与方案
+        json(SYSTEM_PROMPT_OVERRIDES, Settings::systemPromptOverrides) { copy(systemPromptOverrides = it) },
+        json(SYSTEM_PROMPT_PRESETS, Settings::systemPromptPresets) { copy(systemPromptPresets = it) },
     )
 }
 

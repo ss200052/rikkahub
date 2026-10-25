@@ -181,6 +181,17 @@ class SettingsStore internal constructor(
         // 赞助提醒
         val SPONSOR_ALERT_DISMISSED_AT = intPreferencesKey("sponsor_alert_dismissed_at")
 
+        // 批量重新生成
+        val BATCH_REGENERATION = stringPreferencesKey("batch_regeneration")
+        val NOTIFY_BATCH_HIT_IN_BACKGROUND = booleanPreferencesKey("notify_batch_hit_in_background")
+
+        // 全文索引结构版本
+        val FTS_SCHEMA_VERSION = intPreferencesKey("fts_schema_version")
+
+        // 提示词改写与方案
+        val SYSTEM_PROMPT_OVERRIDES = stringPreferencesKey("system_prompt_overrides")
+        val SYSTEM_PROMPT_PRESETS = stringPreferencesKey("system_prompt_presets")
+
         // Uses the same DataStore singleton without starting settings flows or requiring Koin.
         internal suspend fun restoreBeforeInitialization(context: Context, settings: Settings, launchCount: Int) {
             require(!settings.init) { "Cannot restore uninitialized settings" }
