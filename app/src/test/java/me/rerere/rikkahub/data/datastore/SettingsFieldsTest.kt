@@ -8,7 +8,10 @@ import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.asr.ASRProviderSetting
 import me.rerere.mediagen.provider.MediaGenerationProviderSetting
+import me.rerere.rikkahub.data.ai.SystemPromptOverride
+import me.rerere.rikkahub.data.ai.SystemPromptPreset
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
+import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
@@ -162,6 +165,12 @@ private val SAMPLE = Settings(
     webServerLocalhostOnly = true,
     backupReminderConfig = BackupReminderConfig(enabled = true),
     sponsorAlertDismissedAt = 7,
+    batchRegeneration = BatchRegenerationConfig(parallelCount = 6),
+    notifyBatchHitInBackground = false,
+    ftsSchemaVersion = 2,
+    systemPromptOverrides = listOf(SystemPromptOverride(blockId = "base", content = "override")),
+    systemPromptPresets = listOf(SystemPromptPreset(id = "preset", name = "Preset")),
+    promptSchemeId = "zh",
 )
 
 private val STORED_KEYS = setOf(
@@ -213,4 +222,10 @@ private val STORED_KEYS = setOf(
     "quick_messages",
     "backup_reminder_config",
     "sponsor_alert_dismissed_at",
+    "batch_regeneration",
+    "notify_batch_hit_in_background",
+    "fts_schema_version",
+    "system_prompt_overrides",
+    "system_prompt_presets",
+    "prompt_scheme_id",
 )

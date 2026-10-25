@@ -172,42 +172,68 @@ fun SystemPromptInspectorDialog(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                     }
-                    items(groupBlocks, key = { it.id }) { block ->
+                    groupBlocks.forEach { block ->
                         if (block.isTokenized) {
-                            TokenizedBlock(
-                                block = block,
-                                slotDrafts = slotDrafts,
-                                onDraftChange = { slot, value -> slotDrafts["${block.id}::$slot"] = value },
-                                onSave = {
-                                    val texts = block.slots.associateWith { slot ->
-                                        slotDrafts["${block.id}::$slot"] ?: block.slotTexts[slot].orEmpty()
+                            // 分部件段按单元逐个成行：一个段的槽位可能有几十个，
+                            // 全挤在一个 item 里会在展开时一次性组合出几十个输入框
+                            item(key = "${block.id}-header") {
+                                TokenizedHeader(block = block)
+                            }
+                            block.parts.forEachIndexed { groupIndex, partGroup ->
+                                partGroup.parts.forEachIndexed { partIndex, part ->
+                                    item(key = "${block.id}-$groupIndex-$partIndex") {
+                                        TokenizedPartRow(
+                                            block = block,
+                                            part = part,
+                                            slotDrafts = slotDrafts,
+                                            onDraftChange = { slot, value ->
+                                                slotDrafts["${block.id}::$slot"] = value
+                                            },
+                                        )
                                     }
-                                    texts.forEach { (slot, _) -> slotDrafts.remove("${block.id}::$slot") }
-                                    onSaveSlots(block.id, texts)
-                                },
-                                onReset = {
-                                    block.slots.forEach { slot -> slotDrafts.remove("${block.id}::$slot") }
-                                    onSaveSlots(block.id, emptyMap())
-                                },
-                            )
+                                }
+                            }
+                            item(key = "${block.id}-footer") {
+                                TokenizedFooter(
+                                    block = block,
+                                    onSave = {
+                                        val texts = block.slots.associateWith { slot ->
+                                            slotDrafts["${block.id}::$slot"]
+                                                ?: block.slotTexts[slot].orEmpty()
+                                        }
+                                        texts.forEach { (slot, _) ->
+                                            slotDrafts.remove("${block.id}::$slot")
+                                        }
+                                        onSaveSlots(block.id, texts)
+                                    },
+                                    onReset = {
+                                        block.slots.forEach { slot ->
+                                            slotDrafts.remove("${block.id}::$slot")
+                                        }
+                                        onSaveSlots(block.id, emptyMap())
+                                    },
+                                )
+                            }
                         } else {
-                            TextBlock(
-                                block = block,
-                                draft = textDrafts[block.id],
-                                onDraftChange = { textDrafts[block.id] = it },
-                                onEditStart = { textDrafts[block.id] = block.content },
-                                onEditCancel = { textDrafts.remove(block.id) },
-                                onSave = {
-                                    val value = textDrafts[block.id].orEmpty()
-                                    if (value.isBlank()) {
-                                        confirmRestoreText = block
-                                    } else {
-                                        textDrafts.remove(block.id)
-                                        onSaveText(block.id, value)
-                                    }
-                                },
-                                onRestore = { confirmRestoreText = block },
-                            )
+                            item(key = block.id) {
+                                TextBlock(
+                                    block = block,
+                                    draft = textDrafts[block.id],
+                                    onDraftChange = { textDrafts[block.id] = it },
+                                    onEditStart = { textDrafts[block.id] = block.content },
+                                    onEditCancel = { textDrafts.remove(block.id) },
+                                    onSave = {
+                                        val value = textDrafts[block.id].orEmpty()
+                                        if (value.isBlank()) {
+                                            confirmRestoreText = block
+                                        } else {
+                                            textDrafts.remove(block.id)
+                                            onSaveText(block.id, value)
+                                        }
+                                    },
+                                    onRestore = { confirmRestoreText = block },
+                                )
+                            }
                         }
                     }
                 }
@@ -289,83 +315,96 @@ fun SystemPromptInspectorDialog(
 }
 
 /**
- * 分部件段：按骨架把文本框、固定结构、数据块依次摆出来。
+ * 分部件段的标题行。
  *
- * 文本框逐个可改；固定结构与数据块只展示，用来给相邻的文本框提供上下文。
+ * 段内每个单元单独成行（见 [TokenizedPartRow]），所以这里只放标题与「已改写」标记。
  */
 @Composable
-private fun TokenizedBlock(
+private fun TokenizedHeader(block: SystemPromptBlock) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 6.dp),
+    ) {
+        Text(
+            text = block.title,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.weight(1f),
+        )
+        if (block.isOverridden) {
+            AssistChip(onClick = {}, label = { Text("已改写", style = MaterialTheme.typography.labelSmall) })
+        }
+    }
+}
+
+/**
+ * 分部件段里的一个单元。
+ *
+ * 文本框可改；固定结构与数据块只展示——它们不可改，但必须出现，
+ * 用户才知道相邻的文本框处在什么上下文里。
+ */
+@Composable
+private fun TokenizedPartRow(
     block: SystemPromptBlock,
+    part: PromptPart,
     slotDrafts: Map<String, String>,
     onDraftChange: (slot: String, value: String) -> Unit,
+) {
+    when (part) {
+        is PromptPart.Fixed -> Text(
+            text = part.text,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.padding(start = 8.dp),
+        )
+
+        is PromptPart.Token -> AssistChip(
+            onClick = {},
+            modifier = Modifier.padding(start = 8.dp),
+            label = {
+                Text(
+                    text = "<${part.id}>",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            },
+        )
+
+        is PromptPart.Text -> {
+            val key = "${block.id}::${part.slot}"
+            OutlinedTextField(
+                value = slotDrafts[key] ?: block.slotTexts[part.slot].orEmpty(),
+                onValueChange = { onDraftChange(part.slot, it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp),
+                textStyle = MaterialTheme.typography.bodySmall,
+                label = {
+                    Text(
+                        text = part.slot,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                },
+            )
+        }
+    }
+}
+
+/** 分部件段的保存行 */
+@Composable
+private fun TokenizedFooter(
+    block: SystemPromptBlock,
     onSave: () -> Unit,
     onReset: () -> Unit,
 ) {
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth(),
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(bottom = 8.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = block.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                if (block.isOverridden) {
-                    AssistChip(onClick = {}, label = { Text("已改写", style = MaterialTheme.typography.labelSmall) })
-                }
-            }
-            block.parts.forEach { group ->
-                group.parts.forEach { part ->
-                    when (part) {
-                        is PromptPart.Fixed -> Text(
-                            text = part.text,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        )
-
-                        is PromptPart.Token -> AssistChip(
-                            onClick = {},
-                            label = {
-                                Text(
-                                    text = "<${part.id}>",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                )
-                            },
-                        )
-
-                        is PromptPart.Text -> {
-                            val key = "${block.id}::${part.slot}"
-                            OutlinedTextField(
-                                value = slotDrafts[key] ?: block.slotTexts[part.slot].orEmpty(),
-                                onValueChange = { onDraftChange(part.slot, it) },
-                                modifier = Modifier.fillMaxWidth(),
-                                textStyle = MaterialTheme.typography.bodySmall,
-                                label = {
-                                    Text(
-                                        text = part.slot,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onSave) { Text("保存") }
-                if (block.isOverridden) {
-                    TextButton(onClick = onReset) { Text("恢复跟随") }
-                }
-            }
+        TextButton(onClick = onSave) { Text("保存") }
+        if (block.isOverridden) {
+            TextButton(onClick = onReset) { Text("恢复跟随") }
         }
     }
 }

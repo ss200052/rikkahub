@@ -7,8 +7,12 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptComposer
+import me.rerere.rikkahub.data.ai.PromptGroup
 import me.rerere.rikkahub.data.ai.PromptRuntime
+import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.ai.PromptSegments
+import me.rerere.rikkahub.data.ai.PromptSkeleton
 import me.rerere.rikkahub.data.skills.SkillFrontmatterParser
 import me.rerere.rikkahub.data.skills.SkillMetadata
 import me.rerere.rikkahub.data.skills.SkillPaths
@@ -23,11 +27,10 @@ fun createSkillTools(
     val available = allSkills.filter { it.name in enabledSkills }
     if (available.isEmpty()) return emptyList()
 
-    // 技能清单是运行期数据：收进 {{skills_block}}，说明文字保持可改写
+    // 技能清单是运行期数据：只产出技能行，外层 <available_skills> 是骨架里的固定结构
     val skillsVariables: () -> Map<String, String> = {
         mapOf(
-            "skills_block" to buildString {
-                appendLine("<available_skills>")
+            "skills_lines" to buildString {
                 available.forEach { skill ->
                     appendLine("  <skill>")
                     // 技能可能来自第三方导入，转义并限长，防止 name/description 闭合标签注入任意系统提示
@@ -39,7 +42,6 @@ fun createSkillTools(
                     )
                     appendLine("  </skill>")
                 }
-                append("</available_skills>")
             },
         )
     }
@@ -51,7 +53,18 @@ fun createSkillTools(
                 Load and apply a skill to get specialized instructions or capabilities.
                 Call this tool when the user's request matches one of the available skills.
             """.trimIndent(),
-            systemPrompt = { _, _ -> "" },
+            // 默认按英文方案渲染；请求组装时会用当前方案重新渲染
+            systemPrompt = { _, _ ->
+                PromptComposer.compose(
+                    groups = listOf(
+                        PromptGroup("all", PromptSkeleton.parse(PromptSegments.SKILLS_SKELETON)),
+                    ),
+                    activeGroupIds = setOf("all"),
+                    schemeTexts = PromptSchemes.ENGLISH.texts,
+                    slotOverrides = emptyMap(),
+                    tokenValues = skillsVariables(),
+                )
+            },
             systemPromptTemplate = PromptSegments.SKILLS_SKELETON,
             systemPromptVariables = skillsVariables,
             parameters = {

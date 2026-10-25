@@ -17,6 +17,22 @@ object PromptToolTexts {
     val ZH: Map<String, String> = mapOf(
         // 对话检索
         desc(
+            "recent_chats",
+            "列出用户最近与你进行的对话,用来了解其偏好和正在关注的话题。" +
+                "返回对话标题与最后活动日期,置顶的排在前面,其余按最近更新时间排序。" +
+                "当你需要快速了解用户近来在讨论什么时使用。" +
+                "本工具只返回标题和日期;要查具体内容请改用 conversation_search。",
+        ),
+        param("recent_chats", "limit", "最多返回多少条最近对话(默认 10,上限 30)"),
+        desc(
+            "conversation_search",
+            "在用户过往对话中做全文检索,找回其先前提到过的具体信息。" +
+                "请使用聚焦的关键词;必要时换用不同关键词多检索几次。" +
+                "每条结果包含对话标题、命中关键词用方括号标出的片段,以及日期。",
+        ),
+        param("conversation_search", "query", "要在过往对话消息中检索的关键词"),
+        param("conversation_search", "limit", "最多返回多少条结果(默认 15,上限 50)"),
+        desc(
             "conversation_read",
             "按位置完整读取某一个对话的消息。当给你的消息被截断、或检索出的片段需要前后文时使用。" +
                 "位置就是每条消息旁边显示的 #编号。",
@@ -155,6 +171,15 @@ object PromptToolTexts {
                 "作答结果会以 JSON 对象返回,把问题 id 映射到用户的回答。",
         ),
         param("ask_user", "questions", "要向用户提出的问题列表"),
+        param("ask_user", "questions[].id", "这个问题的唯一标识"),
+        param("ask_user", "questions[].question", "展示给用户的问题文本"),
+        param("ask_user", "questions[].options", "可选的候选选项,供用户从中选择"),
+        param(
+            "ask_user",
+            "questions[].selection_type",
+            "作答方式:text(自由输入,默认)、single(选一个选项或自行输入)、" +
+                "multi(选择选项和/或自行输入)",
+        ),
 
         // 日历
         desc(
@@ -208,6 +233,66 @@ object PromptToolTexts {
         param("chart_display", "style", "图表类型。"),
         param("chart_display", "title", "图表标题,显示在顶部。"),
         param("chart_display", "series", "一条或多条数据系列。"),
+        param("chart_display", "series[].name", "系列名称;有多条系列时用作图例。"),
+        param("chart_display", "series[].color", "十六进制颜色,例如 '#FF8800' 或 '#F80'。部分客户端可能忽略。"),
+        param(
+            "chart_display",
+            "series[].values",
+            "折线图/柱状图的一维数据,与 x_axis.data 按位置对齐。",
+        ),
+        param("chart_display", "series[].points", "散点图的二维数据点。"),
+        param("chart_display", "x_axis.title", "轴的标题,通常包含单位。"),
+        param(
+            "chart_display",
+            "x_axis.data",
+            "折线图/柱状图的分类标签(例如月份),与系列数值按位置对齐。只允许放在 x_axis 上,散点图不支持。",
+        ),
+        param(
+            "chart_display",
+            "x_axis.min",
+            "显示范围的下界。折线图只允许设在 y_axis 上;散点图两个轴都可以设。",
+        ),
+        param(
+            "chart_display",
+            "x_axis.max",
+            "显示范围的上界。折线图只允许设在 y_axis 上;散点图两个轴都可以设。",
+        ),
+        param(
+            "chart_display",
+            "x_axis.scale",
+            "刻度类型,默认线性。对数刻度在所有图表的 y_axis 上允许,在 x_axis 上只允许散点图。",
+        ),
+        param(
+            "chart_display",
+            "x_axis.format",
+            "标签格式:数字用 f 风格(例如 '.1f'),日期用 strftime 风格(例如 '%Y-%m')。部分客户端可能忽略。",
+        ),
+        param("chart_display", "y_axis.title", "轴的标题,通常包含单位。"),
+        param(
+            "chart_display",
+            "y_axis.data",
+            "折线图/柱状图的分类标签(例如月份),与系列数值按位置对齐。只允许放在 x_axis 上,散点图不支持。",
+        ),
+        param(
+            "chart_display",
+            "y_axis.min",
+            "显示范围的下界。折线图只允许设在 y_axis 上;散点图两个轴都可以设。",
+        ),
+        param(
+            "chart_display",
+            "y_axis.max",
+            "显示范围的上界。折线图只允许设在 y_axis 上;散点图两个轴都可以设。",
+        ),
+        param(
+            "chart_display",
+            "y_axis.scale",
+            "刻度类型,默认线性。对数刻度在所有图表的 y_axis 上允许,在 x_axis 上只允许散点图。",
+        ),
+        param(
+            "chart_display",
+            "y_axis.format",
+            "标签格式:数字用 f 风格(例如 '.1f'),日期用 strftime 风格(例如 '%Y-%m')。部分客户端可能忽略。",
+        ),
 
         // 设备能力
         desc(

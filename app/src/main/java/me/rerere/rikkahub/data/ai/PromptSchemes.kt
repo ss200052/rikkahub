@@ -16,7 +16,7 @@ object PromptSchemes {
             "time.prefix" to "Current time: ",
             "time.separator" to ", ",
             "gap.prefix" to " (",
-            "gap.suffix" to " since the last message)",
+            "gap.suffix" to " since last message)",
             "time.dot" to ".",
 
             // 工作区提醒

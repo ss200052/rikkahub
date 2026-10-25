@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.ai.prompts
 
+import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.model.MemoryFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,28 +23,44 @@ class MemoryPromptTest {
         updatedAt = 0,
     )
 
-    private fun String.block(tag: String) = substringAfter("<$tag").substringAfter(">").substringBefore("</$tag>").trim()
+    private fun String.block(tag: String) = substringAfter(
+        "<$tag"
+    ).substringAfter(">").substringBefore("</$tag>").trim()
 
     @Test
     fun `profile is injected in full with its version and other files only appear in the listing`() {
-        val prompt = buildMemoryPrompt(listOf(profile, food))
+        val prompt = buildMemoryPrompt(listOf(profile, food), PromptSchemes.ENGLISH.id)
 
         assertTrue(prompt.contains("<profile version=\"${profile.version}\">"))
         assertEquals("- [stated] Name is Lin", prompt.block("profile"))
 
         val listing = prompt.block("memory_listing")
-        assertTrue(listing.startsWith("/topics/food.md | What the user eats and avoids | aliases: diet, 饮食 | updated: "))
+        assertTrue(
+            listing.startsWith("/topics/food.md | What the user eats and avoids | aliases: diet, 饮食 | updated: ")
+        )
         assertFalse(listing.contains(MemoryFile.PROFILE_PATH))
         assertFalse(prompt.contains("Allergic to peanuts"))
     }
 
     @Test
     fun `missing files are shown as empty and creatable`() {
-        val prompt = buildMemoryPrompt(emptyList())
+        val prompt = buildMemoryPrompt(emptyList(), PromptSchemes.ENGLISH.id)
 
         assertTrue(prompt.contains("<preferences version=\"new\">"))
         assertEquals("(empty)", prompt.block("preferences"))
         assertEquals("(no files yet)", prompt.block("memory_listing"))
+    }
+
+    @Test
+    fun `中文方案只换说明文字，记忆正文与标签原样`() {
+        val prompt = buildMemoryPrompt(listOf(profile, food), PromptSchemes.CHINESE.id)
+
+        // 说明文字跟着方案走
+        assertTrue(prompt.contains("当前记忆"))
+        // 数据块与固定结构不动
+        assertTrue(prompt.contains("<profile version=\"${profile.version}\">"))
+        assertEquals("- [stated] Name is Lin", prompt.block("profile"))
+        assertTrue(prompt.block("memory_listing").startsWith("/topics/food.md | What the user eats and avoids"))
     }
 
     @Test
