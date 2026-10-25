@@ -46,9 +46,6 @@ data class BatchKeywordPreset(
     val group: String = "",
     val keyword: String,
 ) {
-    /** tab 上显示的名字：空分组叫「默认」 */
-    val groupLabel: String get() = group.ifBlank { DEFAULT_GROUP_LABEL }
-
     companion object {
         const val DEFAULT_GROUP_LABEL = "默认"
     }

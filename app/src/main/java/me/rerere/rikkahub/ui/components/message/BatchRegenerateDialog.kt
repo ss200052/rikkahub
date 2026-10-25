@@ -14,7 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.InputChip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -113,11 +113,15 @@ fun BatchRegenerateDialog(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(text = "思考深度", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        text = "只对这一批生效，不改动会话本身的设置；跟随会话表示用当前对话的深度",
+                        text = "只对这一批生效，不改动会话本身的设置；跟随会话表示用当前对话的深度。" +
+                            "这个选择会被记住，下次打开沿用。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         FilterChip(
                             selected = reasoningOverride == null,
                             onClick = { reasoningOverride = null },
@@ -331,7 +335,15 @@ private fun KeywordEditor(
 
         // ---- 关键词库：分类内的自定义 tab ----
         if (groups.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "关键词库：点下面的词加入上面这组，点 ✕ 从库里删掉（改库会立即保存）",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 groups.forEach { group ->
                     FilterChip(
                         selected = group == activeGroup,
@@ -342,31 +354,43 @@ private fun KeywordEditor(
                     )
                 }
             }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // 词与删除按钮是并列的两个可点区：点词=加入，点 ✕=从库里删。
+            // 不把 ✕ 塞进 chip 内部，避免和 chip 自己的点击抢事件。
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 groupKeywords.forEach { keyword ->
-                    InputChip(
-                        selected = false,
-                        onClick = { addKeyword(keyword) },
-                        label = { Text(keyword) },
-                        trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.clickable { addKeyword(keyword) },
+                        ) {
                             Text(
-                                text = "×",
+                                text = keyword,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .clickable {
-                                        onPresetsChange(
-                                            presets.filterNot {
-                                                it.category == category &&
-                                                    it.group == activeGroup &&
-                                                    it.keyword == keyword
-                                            },
-                                        )
-                                    }
-                                    .padding(start = 2.dp, end = 4.dp),
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             )
-                        },
-                    )
+                        }
+                        Text(
+                            text = "✕",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable {
+                                    onPresetsChange(
+                                        presets.filterNot {
+                                            it.category == category &&
+                                                it.group == activeGroup &&
+                                                it.keyword == keyword
+                                        },
+                                    )
+                                }
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
+                        )
+                    }
                 }
             }
         }
@@ -385,7 +409,9 @@ private fun KeywordEditor(
                 enabled = keywords.isNotEmpty(),
                 onClick = { showNewGroup = !showNewGroup },
             ) { Text("存为新分组", style = MaterialTheme.typography.labelMedium) }
-            if (groupKeywords.isNotEmpty()) {
+            // 只有确实选中了某个现有分组时才给删组入口，
+            // 避免选中的组被删空后回退到第一个组、误删别的组
+            if (selectedGroup.isNotBlank() && selectedGroup in groups) {
                 TextButton(
                     onClick = {
                         onPresetsChange(
