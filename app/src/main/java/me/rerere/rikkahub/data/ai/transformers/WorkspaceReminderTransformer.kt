@@ -11,6 +11,9 @@ import me.rerere.workspace.WorkspaceShellStatus
 import java.io.ByteArrayOutputStream
 import java.nio.file.Paths
 
+/** 工作区提醒在覆盖表里的键 */
+internal const val WORKSPACE_REMINDER_ID = "segment.workspace_reminder"
+
 /**
  * Workspace 系统提示注入转换器
  *
@@ -31,12 +34,17 @@ class WorkspaceReminderTransformer(
         // 与 ChatToolFactory.createWorkspaceToolsIfReady 保持一致: 仅在 shell 就绪时注入
         if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return messages
 
-        val prompt = buildWorkspacePrompt(
-            workspace = workspace,
-            shell = workspaceRepository.rootfsShell(workspaceId),
-            distro = readDistroName(workspaceId),
-            cwd = ctx.workspaceCwd,
-        ) + buildAgentsPrompt(workspaceId, ctx.workspaceCwd)
+        val prompt = ctx.settings.systemPromptOverrides
+            .firstOrNull { it.blockId == WORKSPACE_REMINDER_ID && it.content.isNotBlank() }
+            ?.content
+            ?: (
+                buildWorkspacePrompt(
+                    workspace = workspace,
+                    shell = workspaceRepository.rootfsShell(workspaceId),
+                    distro = readDistroName(workspaceId),
+                    cwd = ctx.workspaceCwd,
+                ) + buildAgentsPrompt(workspaceId, ctx.workspaceCwd)
+                )
 
         // 追加到第一条 system 消息; 若不存在则插入一条
         val systemIndex = messages.indexOfFirst { it.role == MessageRole.SYSTEM }

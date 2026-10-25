@@ -3,11 +3,14 @@ package me.rerere.rikkahub.data.ai
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.ai.agent.AgentHooks
 import me.rerere.ai.core.InputSchema
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.agent.AgentRequest
 import me.rerere.ai.agent.RetryPolicy
 import me.rerere.ai.agent.StepRequest
@@ -25,16 +28,22 @@ import me.rerere.rikkahub.data.ai.prompts.buildMemoryPrompt
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
 import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
+import me.rerere.rikkahub.data.ai.transformers.INJECTION_AFTER_ID
+import me.rerere.rikkahub.data.ai.transformers.INJECTION_BEFORE_ID
+import me.rerere.rikkahub.data.ai.transformers.INJECTION_TOP_ID
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.OcrTransformer
 import me.rerere.rikkahub.data.ai.transformers.OutputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.PlaceholderTransformer
 import me.rerere.rikkahub.data.ai.transformers.PromptInjectionTransformer
 import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
+import me.rerere.rikkahub.data.ai.transformers.TIME_REMINDER_ID
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
+import me.rerere.rikkahub.data.ai.transformers.WORKSPACE_REMINDER_ID
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
+import me.rerere.rikkahub.data.ai.transformers.collectInjections
 import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
 import me.rerere.rikkahub.data.ai.transformers.transformThinkTags
 import me.rerere.rikkahub.data.ai.transformers.transforms
@@ -43,13 +52,17 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.MemoryFile
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.repository.memoryId
+import me.rerere.workspace.WorkspaceShellStatus
+import java.time.ZoneId
 import kotlin.time.Clock
+import kotlin.time.toJavaInstant
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatRequestFactory"
@@ -80,7 +93,7 @@ class ChatRequestFactory(
     private val chatToolFactory: ChatToolFactory,
     private val memoryRepository: MemoryRepository,
     templateTransformer: TemplateTransformer,
-    workspaceRepository: WorkspaceRepository,
+    private val workspaceRepository: WorkspaceRepository,
 ) {
     private val inputTransformers: List<InputMessageTransformer> = listOf(
         TimeReminderTransformer,
@@ -267,6 +280,24 @@ class ChatRequestFactory(
             }
         }
 
+        return blocks
+    }
+
+    /**
+     * 完整的请求体分段，供「查看当前生效的提示词」用。
+     *
+     * 比 [buildSystemPromptBlocks] 多出工具描述、注入、工作区提醒、时间提醒——
+     * 那几处要么走 tools 参数、要么在转换阶段才生成，正常组装不需要，只有预览才需要。
+     */
+    suspend fun buildAllPromptSegments(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+    ): List<SystemPromptBlock> {
+        val overrides = turn.settings.systemPromptOverrides
+            .filter { it.content.isNotBlank() }
+            .associate { it.blockId to it.content }
+        val blocks = buildSystemPromptBlocks(turn, messages).toMutableList()
+
         // ④ 工具的 description 与参数说明（走 tools 参数，不占系统提示词）
         turn.tools.forEach { tool ->
             val descId = toolDescriptionId(tool.name)
@@ -300,6 +331,93 @@ class ChatRequestFactory(
                     hasOverride = paramOverride != null,
                     group = PromptSegmentGroup.TOOLS,
                 )
+            }
+        }
+
+        // ⑤ 提示词注入：按位置汇总
+        val injections = collectInjections(
+            messages = messages,
+            assistant = turn.assistant,
+            modeInjections = turn.settings.modeInjections,
+            lorebooks = turn.settings.lorebooks,
+        )
+        if (injections.isNotEmpty()) {
+            val byPosition = injections
+                .sortedByDescending { it.priority }
+                .groupBy { it.position }
+            listOf(
+                Triple(
+                    INJECTION_BEFORE_ID,
+                    "系统提示词之前",
+                    InjectionPosition.BEFORE_SYSTEM_PROMPT,
+                ),
+                Triple(
+                    INJECTION_AFTER_ID,
+                    "系统提示词之后",
+                    InjectionPosition.AFTER_SYSTEM_PROMPT,
+                ),
+                Triple(
+                    INJECTION_TOP_ID,
+                    "首条用户消息之前",
+                    InjectionPosition.TOP_OF_CHAT,
+                ),
+            ).forEach { (id, title, position) ->
+                val joined = byPosition[position]?.joinToString("\n") { it.content }.orEmpty()
+                if (joined.isNotBlank() || overrides[id] != null) {
+                    blocks += SystemPromptBlock(
+                        id = id,
+                        title = "注入 · $title",
+                        content = overrides[id] ?: joined,
+                        defaultContent = joined,
+                        dynamic = true,
+                        hasOverride = overrides[id] != null,
+                    )
+                }
+            }
+        }
+
+        // ⑥ 工作区提醒：追加到系统提示词末尾
+        val workspaceId = turn.assistant.workspaceId?.toString()
+        if (workspaceId != null) {
+            // 预览时算一次内容，失败就留空，不影响其它段
+            val preview = runCatching {
+                val workspace = workspaceRepository.getById(workspaceId) ?: return@runCatching ""
+                if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return@runCatching ""
+                "（工作区提醒在发送时按当前环境生成，此处不展开）"
+            }.getOrDefault("")
+            if (preview.isNotBlank() || overrides[WORKSPACE_REMINDER_ID] != null) {
+                blocks += SystemPromptBlock(
+                    id = WORKSPACE_REMINDER_ID,
+                    title = "工作区提醒",
+                    content = overrides[WORKSPACE_REMINDER_ID] ?: preview,
+                    defaultContent = preview,
+                    dynamic = true,
+                    hasOverride = overrides[WORKSPACE_REMINDER_ID] != null,
+                )
+            }
+        }
+
+        // ⑦ 时间提醒：按首条用户消息的时间生成
+        if (turn.assistant.enableTimeReminder) {
+            val firstUser = messages.firstOrNull { it.role == MessageRole.USER }
+            if (firstUser != null) {
+                val preview = runCatching {
+                    val javaInstant = firstUser.createdAt.toInstant(TimeZone.currentSystemDefault()).toJavaInstant()
+                    val dayOfWeek = javaInstant.atZone(ZoneId.systemDefault()).dayOfWeek
+                        .getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault())
+                    "<time_reminder>Current time: $dayOfWeek, ${javaInstant.toLocalDateTime()}</time_reminder>"
+                }.getOrDefault("")
+                if (preview.isNotBlank() || overrides[TIME_REMINDER_ID] != null) {
+                    blocks += SystemPromptBlock(
+                        id = TIME_REMINDER_ID,
+                        title = "时间提醒",
+                        content = overrides[TIME_REMINDER_ID] ?: preview,
+                        defaultContent = preview,
+                        dynamic = true,
+                        hasOverride = overrides[TIME_REMINDER_ID] != null,
+                        group = PromptSegmentGroup.MESSAGES,
+                    )
+                }
             }
         }
 

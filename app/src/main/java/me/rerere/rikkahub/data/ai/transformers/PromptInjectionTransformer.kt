@@ -25,18 +25,29 @@ object PromptInjectionTransformer : InputMessageTransformer {
             assistant = ctx.assistant,
             modeInjections = ctx.settings.modeInjections,
             lorebooks = ctx.settings.lorebooks,
+            overrides = ctx.settings.systemPromptOverrides
+                .filter { it.content.isNotBlank() }
+                .associate { it.blockId to it.content },
         )
     }
 }
 
+/** 注入内容在覆盖表里的键 */
+internal const val INJECTION_BEFORE_ID = "segment.injection.before"
+internal const val INJECTION_AFTER_ID = "segment.injection.after"
+internal const val INJECTION_TOP_ID = "segment.injection.top"
+
 /**
  * 核心注入逻辑（可测试的纯函数）
+ *
+ * [overrides] 允许整体替换某个位置的注入内容（用户在这一层改写时使用）。
  */
 internal fun transformMessages(
     messages: List<UIMessage>,
     assistant: Assistant,
     modeInjections: List<PromptInjection.ModeInjection>,
     lorebooks: List<Lorebook>,
+    overrides: Map<String, String> = emptyMap(),
 ): List<UIMessage> {
     // 收集所有需要注入的内容
     val injections = collectInjections(
@@ -56,7 +67,7 @@ internal fun transformMessages(
         .groupBy { it.position }
 
     // 应用注入
-    return applyInjections(messages, byPosition)
+    return applyInjections(messages, byPosition, overrides)
 }
 
 /**
@@ -98,10 +109,13 @@ internal fun collectInjections(
 
 /**
  * 应用注入到消息列表
+ *
+ * [overrides] 里若某个位置的整段内容被改写，就用改写值替换该位置的原内容。
  */
 internal fun applyInjections(
     messages: List<UIMessage>,
-    byPosition: Map<InjectionPosition, List<PromptInjection>>
+    byPosition: Map<InjectionPosition, List<PromptInjection>>,
+    overrides: Map<String, String> = emptyMap(),
 ): List<UIMessage> {
     val result = messages.toMutableList()
 
@@ -110,10 +124,12 @@ internal fun applyInjections(
 
     // 处理 BEFORE_SYSTEM_PROMPT 和 AFTER_SYSTEM_PROMPT
     if (systemIndex >= 0) {
-        val beforeContent = byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
-        val afterContent = byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
+        val beforeContent = overrides[INJECTION_BEFORE_ID]
+            ?: byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT]
+                ?.joinToString("\n") { it.content } ?: ""
+        val afterContent = overrides[INJECTION_AFTER_ID]
+            ?: byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT]
+                ?.joinToString("\n") { it.content } ?: ""
 
         if (beforeContent.isNotEmpty() || afterContent.isNotEmpty()) {
             val systemMessage = result[systemIndex]
@@ -140,10 +156,12 @@ internal fun applyInjections(
         }
     } else {
         // 没有系统消息时，创建一个新的系统消息
-        val beforeContent = byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
-        val afterContent = byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
+        val beforeContent = overrides[INJECTION_BEFORE_ID]
+            ?: byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT]
+                ?.joinToString("\n") { it.content } ?: ""
+        val afterContent = overrides[INJECTION_AFTER_ID]
+            ?: byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT]
+                ?.joinToString("\n") { it.content } ?: ""
 
         val combinedContent = buildString {
             if (beforeContent.isNotEmpty()) {
@@ -161,15 +179,23 @@ internal fun applyInjections(
     }
 
     // 处理 TOP_OF_CHAT：在第一条用户消息之前插入
-    val topInjections = byPosition[InjectionPosition.TOP_OF_CHAT]
-    if (!topInjections.isNullOrEmpty()) {
-        // 重新计算索引（因为可能插入了系统消息）
+    val topOverride = overrides[INJECTION_TOP_ID]
+    if (topOverride != null) {
         var insertIndex = result.indexOfFirst { it.role == MessageRole.USER }
             .takeIf { it >= 0 } ?: result.size
         insertIndex = findSafeInsertIndex(result, insertIndex)
-        createMergedInjectionMessages(topInjections).forEach { message ->
-            result.add(insertIndex, message)
-            insertIndex++
+        result.add(insertIndex, UIMessage.user(topOverride).copy(isSynthetic = true))
+    } else {
+        val topInjections = byPosition[InjectionPosition.TOP_OF_CHAT]
+        if (!topInjections.isNullOrEmpty()) {
+            // 重新计算索引（因为可能插入了系统消息）
+            var insertIndex = result.indexOfFirst { it.role == MessageRole.USER }
+                .takeIf { it >= 0 } ?: result.size
+            insertIndex = findSafeInsertIndex(result, insertIndex)
+            createMergedInjectionMessages(topInjections).forEach { message ->
+                result.add(insertIndex, message)
+                insertIndex++
+            }
         }
     }
 

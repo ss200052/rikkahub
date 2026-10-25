@@ -11,6 +11,9 @@ import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.time.toJavaInstant
 
+/** 时间提醒在覆盖表里的键 */
+internal const val TIME_REMINDER_ID = "segment.time_reminder"
+
 /**
  * 时间提醒注入转换器
  *
@@ -22,13 +25,17 @@ object TimeReminderTransformer : InputMessageTransformer {
         messages: List<UIMessage>,
     ): List<UIMessage> {
         if (!ctx.assistant.enableTimeReminder) return messages
-        return applyTimeReminder(messages, ctx.assistant.timeReminderIntervalMinutes)
+        val override = ctx.settings.systemPromptOverrides
+            .firstOrNull { it.blockId == TIME_REMINDER_ID && it.content.isNotBlank() }
+            ?.content
+        return applyTimeReminder(messages, ctx.assistant.timeReminderIntervalMinutes, override)
     }
 }
 
 internal fun applyTimeReminder(
     messages: List<UIMessage>,
     intervalMinutes: Int = 60,
+    overrideContent: String? = null,
 ): List<UIMessage> {
     val thresholdSeconds = intervalMinutes.coerceAtLeast(1).toLong() * 60
     val result = mutableListOf<UIMessage>()
@@ -41,14 +48,14 @@ internal fun applyTimeReminder(
             val currInstant = current.createdAt.toInstant(tz)
             if (!firstUserFound) {
                 firstUserFound = true
-                result.add(buildTimeReminderMessage(null, currInstant))
+                result.add(buildTimeReminderMessage(null, currInstant, overrideContent))
             } else {
                 val previous = messages[i - 1]
                 val prevInstant = previous.createdAt.toInstant(tz)
                 val gapSeconds = (currInstant - prevInstant).inWholeSeconds
 
                 if (gapSeconds > thresholdSeconds) {
-                    result.add(buildTimeReminderMessage(gapSeconds, currInstant))
+                    result.add(buildTimeReminderMessage(gapSeconds, currInstant, overrideContent))
                 }
             }
         }
@@ -58,7 +65,15 @@ internal fun applyTimeReminder(
     return result
 }
 
-private fun buildTimeReminderMessage(gapSeconds: Long?, instant: Instant): UIMessage {
+private fun buildTimeReminderMessage(
+    gapSeconds: Long?,
+    instant: Instant,
+    overrideContent: String? = null,
+): UIMessage {
+    // 被改写后整段固定，不再随时间变化
+    if (overrideContent != null) {
+        return UIMessage.user(overrideContent).copy(isSynthetic = true)
+    }
     val javaInstant = instant.toJavaInstant()
     val dayOfWeek = javaInstant.atZone(ZoneId.systemDefault()).dayOfWeek
         .getDisplayName(TextStyle.FULL, Locale.getDefault())

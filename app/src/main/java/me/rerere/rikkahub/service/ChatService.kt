@@ -694,14 +694,14 @@ class ChatService(
     fun stopBatchAll() = batchController.stopAll()
 
     /** 重跑某一路（失败、截断都能再来一次） */
-    /** 读取当前生效的系统提示词分块，供「查看系统提示词」界面预览 */
+    /** 读取当前生效的全部提示词分段（含工具描述、注入、合成消息），供检查器预览 */
     suspend fun buildSystemPromptBlocks(conversationId: Uuid): List<SystemPromptBlock> {
         val session = sessionManager.getOrCreate(conversationId)
         ensureInitialized(session)
         val conversation = session.state.value
         val settings = settingsStore.awaitLoaded()
         val turn = requestFactory.createContext(settings, conversation)
-        return requestFactory.buildSystemPromptBlocks(turn, conversation.currentMessages)
+        return requestFactory.buildAllPromptSegments(turn, conversation.currentMessages)
     }
 
     /** 这个批次是否需要自动展开工作台；每个批次只返回一次 true */
