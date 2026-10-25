@@ -89,9 +89,9 @@ fun SystemPromptInspectorDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
-                Text("当前生效的系统提示词")
+                Text("当前生效的提示词")
                 Text(
-                    text = "共 ${blocks.size} 块，按实际注入顺序排列",
+                    text = "共 ${blocks.size} 段，按请求体里的实际位置分组",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -104,26 +104,37 @@ fun SystemPromptInspectorDialog(
                     .heightIn(max = 460.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(blocks, key = { it.id }) { block ->
-                    val draft = drafts[block.id]
-                    BlockCard(
-                        block = block,
-                        editingDraft = draft,
-                        onEditStart = { drafts[block.id] = block.content },
-                        onDraftChange = { drafts[block.id] = it },
-                        onEditCancel = { drafts.remove(block.id) },
-                        onEditConfirm = {
-                            val value = drafts[block.id] ?: ""
-                            drafts.remove(block.id)
-                            if (value.isBlank()) {
-                                // 清空 = 交还给助手/记忆，需要确认
-                                confirmRestore = block
-                            } else {
-                                onSaveOverride(block.id, value)
-                            }
-                        },
-                        onRestoreDefault = { confirmRestore = block },
-                    )
+                // 按请求体里的位置分组：系统提示词 / 工具描述 / 合成消息
+                blocks.groupBy { it.group }.forEach { (group, groupBlocks) ->
+                    item(key = "header-${group.name}") {
+                        Text(
+                            text = "${group.label}（${groupBlocks.size}）",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    items(groupBlocks, key = { it.id }) { block ->
+                        val draft = drafts[block.id]
+                        BlockCard(
+                            block = block,
+                            editingDraft = draft,
+                            onEditStart = { drafts[block.id] = block.content },
+                            onDraftChange = { drafts[block.id] = it },
+                            onEditCancel = { drafts.remove(block.id) },
+                            onEditConfirm = {
+                                val value = drafts[block.id] ?: ""
+                                drafts.remove(block.id)
+                                if (value.isBlank()) {
+                                    // 清空 = 交还给助手/记忆，需要确认
+                                    confirmRestore = block
+                                } else {
+                                    onSaveOverride(block.id, value)
+                                }
+                            },
+                            onRestoreDefault = { confirmRestore = block },
+                        )
+                    }
                 }
 
                 item {

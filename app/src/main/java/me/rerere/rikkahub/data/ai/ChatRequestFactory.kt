@@ -3,7 +3,11 @@ package me.rerere.rikkahub.data.ai
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.ai.agent.AgentHooks
+import me.rerere.ai.core.InputSchema
 import me.rerere.ai.agent.AgentRequest
 import me.rerere.ai.agent.RetryPolicy
 import me.rerere.ai.agent.StepRequest
@@ -110,6 +114,7 @@ class ChatRequestFactory(
             conversationSystemPrompt = conversation.customSystemPrompt,
             workspaceCwd = conversation.workspaceCwd,
             memories = if (assistant.enableMemory) memoryRepository.getFiles(assistant.memoryId) else emptyList(),
+            // 保持原始文案，改写留到组装请求时套用，这样预览能拿到英文基线做对比
             tools = chatToolFactory.createTools(
                 settings = settings,
                 assistant = assistant,
@@ -128,6 +133,10 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
     ): Pair<AgentRequest, AgentHooks> {
+        // 工具文案的改写在这里生效：工具名不动，只换描述和参数说明
+        val toolOverrides = turn.settings.systemPromptOverrides
+            .filter { it.content.isNotBlank() }
+            .associate { it.blockId to it.content }
         val request = AgentRequest(
             provider = usageRecorder.wrap(
                 providerManager.getProviderByType(turn.providerSetting),
@@ -135,7 +144,7 @@ class ChatRequestFactory(
             ),
             providerSetting = turn.providerSetting,
             messages = messages,
-            tools = turn.tools,
+            tools = turn.tools.map { it.withPromptOverrides(toolOverrides) },
             stream = turn.assistant.streamOutput,
             retry = turn.settings.retryPolicy(),
         )
@@ -255,6 +264,42 @@ class ChatRequestFactory(
                     defaultContent = prompt,
                     dynamic = true,
                 ).applyOverride()
+            }
+        }
+
+        // ④ 工具的 description 与参数说明（走 tools 参数，不占系统提示词）
+        turn.tools.forEach { tool ->
+            val descId = toolDescriptionId(tool.name)
+            val descOverride = overrides[descId]
+            blocks += SystemPromptBlock(
+                id = descId,
+                title = "工具描述 · ${tool.name}",
+                content = descOverride ?: tool.description,
+                defaultContent = tool.description,
+                dynamic = true,
+                hasOverride = descOverride != null,
+                group = PromptSegmentGroup.TOOLS,
+            )
+
+            val schema = runCatching { tool.parameters() }.getOrNull() as? InputSchema.Obj
+                ?: return@forEach
+            schema.properties.forEach { (paramName, value) ->
+                val default = (value as? JsonObject)
+                    ?.get("description")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                    ?: return@forEach
+                val paramId = toolParamDescriptionId(tool.name, paramName)
+                val paramOverride = overrides[paramId]
+                blocks += SystemPromptBlock(
+                    id = paramId,
+                    title = "参数 · ${tool.name}.$paramName",
+                    content = paramOverride ?: default,
+                    defaultContent = default,
+                    dynamic = true,
+                    hasOverride = paramOverride != null,
+                    group = PromptSegmentGroup.TOOLS,
+                )
             }
         }
 

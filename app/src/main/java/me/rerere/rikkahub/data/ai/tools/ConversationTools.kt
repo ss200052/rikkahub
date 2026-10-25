@@ -31,10 +31,10 @@ fun createConversationTools(
     Tool(
         name = "recent_chats",
         description = """
-            List the user's recent conversations with you to understand their preferences and ongoing topics.
-            Returns conversation titles and the date of last activity, ordered by pinned first then most recently updated.
-            Use this when you need quick context about what the user has been discussing lately.
-            Only titles and dates are returned; use `conversation_search` to look up the actual content.
+            列出用户最近与你进行的对话，用来了解其偏好和正在关注的话题。
+            返回对话标题与最后活动日期，置顶的排在前面，其余按最近更新时间排序。
+            当你需要快速了解用户近来在讨论什么时使用。
+            本工具只返回标题和日期；要查具体内容请改用 `conversation_search`。
         """.trimIndent(),
         parameters = {
             InputSchema.Obj(
@@ -43,7 +43,7 @@ fun createConversationTools(
                         put("type", "integer")
                         put(
                             "description",
-                            "Maximum number of recent conversations to return (default: 10, max: 30)"
+                            "最多返回多少条最近对话（默认 10，上限 30）"
                         )
                     })
                 }
@@ -73,22 +73,22 @@ fun createConversationTools(
 private fun conversationSearchTool(search: suspend (query: String) -> List<MessageSearchResult>) = Tool(
     name = "conversation_search",
     description = """
-        Full-text search across the user's past conversations to recall specific information they mentioned before.
-        Use focused keywords. Run multiple searches with different keywords if needed.
-        Each result includes the conversation title, a snippet with matched keywords wrapped in [brackets], and the date.
+        在用户过往对话中做全文检索，找回其先前提到过的具体信息。
+        请使用聚焦的关键词；必要时换用不同关键词多检索几次。
+        每条结果包含对话标题、命中关键词用 [方括号] 标出的片段，以及日期。
     """.trimIndent(),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
                 put("query", buildJsonObject {
                     put("type", "string")
-                    put("description", "Keywords to search for in past conversation messages")
+                    put("description", "要在过往对话消息中检索的关键词")
                 })
                 put("limit", buildJsonObject {
                     put("type", "integer")
                     put(
                         "description",
-                        "Maximum number of results to return (default: 15, max: 50)"
+                        "最多返回多少条结果（默认 15，上限 50）"
                     )
                 })
             },

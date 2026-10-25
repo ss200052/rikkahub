@@ -17,6 +17,18 @@ object SystemPromptBlockId {
     const val WORKSPACE = "workspace"
 }
 
+/** 片段在请求体里的位置分组 */
+enum class PromptSegmentGroup(val label: String) {
+    /** 系统提示词里的内容 */
+    SYSTEM("系统提示词"),
+
+    /** tools 参数里的工具描述与参数说明 */
+    TOOLS("工具描述"),
+
+    /** 消息列表里的合成内容（时间提醒等） */
+    MESSAGES("合成消息"),
+}
+
 /**
  * 系统提示词的一个块。
  *
@@ -35,6 +47,10 @@ data class SystemPromptBlock(
     val dynamic: Boolean = false,
     /** 是否存在用户改写。不能靠比较内容判断：改写值可能恰好等于某次默认值 */
     val hasOverride: Boolean = false,
+    /** 这一块在请求体的哪个位置 */
+    val group: PromptSegmentGroup = PromptSegmentGroup.SYSTEM,
+    /** 工具名这类契约字段不可编辑 */
+    val editable: Boolean = true,
 ) {
     val isOverridden: Boolean get() = hasOverride
 
