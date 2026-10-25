@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import me.rerere.rikkahub.data.ai.BuiltinPromptPresets
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
 
@@ -48,6 +49,8 @@ fun SystemPromptInspectorDialog(
     onApplyPreset: (SystemPromptPreset) -> Unit,
     onDeletePreset: (String) -> Unit,
     onResetAll: () -> Unit,
+    applyNotice: String? = null,
+    onDismissApplyNotice: () -> Unit = {},
 ) {
     // blockId -> 正在编辑的草稿
     val drafts = remember { mutableStateMapOf<String, String>() }
@@ -149,6 +152,34 @@ fun SystemPromptInspectorDialog(
                             Text("保存当前")
                         }
                     }
+                    // 说清应用规则：方案只管它自己改写过的块，不碰其余块
+                    Text(
+                        text = "应用方案只覆盖它包含的块，其余块保持当前改写不动",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(bottom = 2.dp),
+                    )
+                    applyNotice?.let { notice ->
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(start = 10.dp, end = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = notice,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = onDismissApplyNotice) { Text("知道了") }
+                            }
+                        }
+                    }
                     if (showPresetInput) {
                         OutlinedTextField(
                             value = presetName,
@@ -182,6 +213,8 @@ fun SystemPromptInspectorDialog(
                 }
 
                 items(presets, key = { it.id }) { preset ->
+                    // 内置方案不在设置里存，删不掉；用户自己存的才给删除入口
+                    val builtin = BuiltinPromptPresets.isBuiltin(preset.id)
                     Surface(
                         shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -198,8 +231,16 @@ fun SystemPromptInspectorDialog(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
+                            if (builtin) {
+                                AssistChip(
+                                    onClick = {},
+                                    label = { Text("内置", style = MaterialTheme.typography.labelSmall) },
+                                )
+                            }
                             TextButton(onClick = { onApplyPreset(preset) }) { Text("应用") }
-                            TextButton(onClick = { onDeletePreset(preset.id) }) { Text("删除") }
+                            if (!builtin) {
+                                TextButton(onClick = { onDeletePreset(preset.id) }) { Text("删除") }
+                            }
                         }
                     }
                 }

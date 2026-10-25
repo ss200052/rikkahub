@@ -325,6 +325,14 @@ class ChatVM(
     var systemPromptBlocks by mutableStateOf<List<SystemPromptBlock>>(emptyList())
         private set
 
+    /** 最近一次应用方案的结果，界面提示一次后清掉 */
+    var systemPromptApplyNotice by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissSystemPromptApplyNotice() {
+        systemPromptApplyNotice = null
+    }
+
     /** 读取当前生效的全部提示词块 */
     fun loadSystemPromptBlocks() {
         viewModelScope.launch {
@@ -367,10 +375,29 @@ class ChatVM(
         }
     }
 
+    /**
+     * 应用方案时只覆盖方案里明确改写过的块。
+     *
+     * 当前已经改写、但方案没涉及的块保持原样：方案是「一组可以随时贴上去的改写」，
+     * 不是「一整套会清空其余内容的快照」。想退回某个精确状态就先恢复默认再应用。
+     */
     fun applySystemPromptPreset(preset: SystemPromptPreset) {
         viewModelScope.launch {
-            settingsStore.update { it.copy(systemPromptOverrides = preset.overrides) }
+            var replacedCount = 0
+            var keptCount = 0
+            settingsStore.update { current ->
+                val presetIds = preset.overrides.mapTo(mutableSetOf()) { it.blockId }
+                val kept = current.systemPromptOverrides.filter { it.blockId !in presetIds }
+                replacedCount = preset.overrides.size
+                keptCount = kept.size
+                current.copy(systemPromptOverrides = kept + preset.overrides)
+            }
             loadSystemPromptBlocks()
+            systemPromptApplyNotice = buildString {
+                append("已应用「${preset.name}」：覆盖 $replacedCount 块")
+                // 没被方案涉及、但用户手上有改写的块被保留下来了，明确说一声
+                if (keptCount > 0) append("，保留 $keptCount 块当前改写")
+            }
         }
     }
 
@@ -385,6 +412,7 @@ class ChatVM(
     fun resetAllSystemPromptOverrides() {
         viewModelScope.launch {
             settingsStore.update { it.copy(systemPromptOverrides = emptyList()) }
+            systemPromptApplyNotice = null
             loadSystemPromptBlocks()
         }
     }

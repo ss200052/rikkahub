@@ -6,7 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import me.rerere.ai.agent.AgentEvent
 import me.rerere.ai.agent.AgentHooks
 import me.rerere.ai.agent.AgentRequest
@@ -283,6 +283,7 @@ class BatchGenerationController(
                     val waitMs = RATE_LIMIT_BASE_DELAY_MS shl (rateLimitRetries - 1)
                     val waitSeconds = (waitMs / 1000).toInt()
                     publish(
+                        runId,
                         index,
                         LaneState.Running(index, attempt, rerollCount, lastHit, waitSeconds),
                     )
@@ -292,6 +293,7 @@ class BatchGenerationController(
                     continue
                 }
                 publish(
+                    runId,
                     index,
                     LaneState.Failed(
                         index,
@@ -374,25 +376,35 @@ class BatchGenerationController(
      */
     private fun publish(runId: Long, index: Int, state: LaneState) {
         _session.update { current ->
-            if (current == null || current.runId != runId) current
-            else if (index !in current.lanes.indices) current
-            else current.withLane(state)
+            if (current == null || current.runId != runId) {
+                current
+            } else if (index !in current.lanes.indices) {
+                current
+            } else {
+                current.withLane(state)
+            }
         }
     }
 
     /** 整批累计重 roll 次数 +1，用于工作台顶部的总览 */
     private fun bumpTotalRerolls(runId: Long) {
         _session.update {
-            if (it == null || it.runId != runId) it
-            else it.copy(totalRerolls = it.totalRerolls + 1)
+            if (it == null || it.runId != runId) {
+                it
+            } else {
+                it.copy(totalRerolls = it.totalRerolls + 1)
+            }
         }
     }
 
     /** 整批累计命中次数 +1 */
     private fun bumpTotalHits(runId: Long) {
         _session.update {
-            if (it == null || it.runId != runId) it
-            else it.copy(totalHits = it.totalHits + 1)
+            if (it == null || it.runId != runId) {
+                it
+            } else {
+                it.copy(totalHits = it.totalHits + 1)
+            }
         }
     }
 }

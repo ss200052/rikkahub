@@ -9,12 +9,12 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.ai.agent.AgentHooks
-import me.rerere.ai.core.InputSchema
-import me.rerere.ai.core.MessageRole
 import me.rerere.ai.agent.AgentRequest
 import me.rerere.ai.agent.RetryPolicy
 import me.rerere.ai.agent.StepRequest
 import me.rerere.ai.agent.withRetry
+import me.rerere.ai.core.InputSchema
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
 import me.rerere.ai.provider.Model
@@ -43,6 +43,7 @@ import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WORKSPACE_REMINDER_ID
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
+import me.rerere.rikkahub.data.ai.transformers.buildWorkspaceReminderContent
 import me.rerere.rikkahub.data.ai.transformers.collectInjections
 import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
 import me.rerere.rikkahub.data.ai.transformers.transformThinkTags
@@ -59,6 +60,7 @@ import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.repository.memoryId
+import me.rerere.rikkahub.utils.toLocalDateTime
 import me.rerere.workspace.WorkspaceShellStatus
 import java.time.ZoneId
 import kotlin.time.Clock
@@ -379,11 +381,16 @@ class ChatRequestFactory(
         // ⑥ 工作区提醒：追加到系统提示词末尾
         val workspaceId = turn.assistant.workspaceId?.toString()
         if (workspaceId != null) {
-            // 预览时算一次内容，失败就留空，不影响其它段
+            // 预览时按当前环境真实生成一次，失败就留空，不影响其它段
             val preview = runCatching {
                 val workspace = workspaceRepository.getById(workspaceId) ?: return@runCatching ""
                 if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return@runCatching ""
-                "（工作区提醒在发送时按当前环境生成，此处不展开）"
+                buildWorkspaceReminderContent(
+                    repository = workspaceRepository,
+                    workspaceId = workspaceId,
+                    workspace = workspace,
+                    cwd = turn.workspaceCwd,
+                )
             }.getOrDefault("")
             if (preview.isNotBlank() || overrides[WORKSPACE_REMINDER_ID] != null) {
                 blocks += SystemPromptBlock(

@@ -68,6 +68,7 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.BuiltinPromptPresets
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
@@ -422,6 +423,7 @@ private fun ChatPageContent(
                     onStopVoiceMode = vm.voiceSession::stop,
                     onInspectSystemPrompt = {
                         vm.loadSystemPromptBlocks()
+                        vm.dismissSystemPromptApplyNotice()
                         showSystemPromptInspector = true
                     },
                     state = inputState,
@@ -499,7 +501,7 @@ private fun ChatPageContent(
             LaunchedEffect(batchSession?.runId) {
                 val session = batchSession ?: return@LaunchedEffect
                 // 批次不属于当前对话就不打扰：切换会话时不该弹别人那批的面板
-                if (session.conversationId != id.toString()) return@LaunchedEffect
+                if (session.conversationId != conversation.id.toString()) return@LaunchedEffect
                 // 同一个批次只自动展开一次，用户收起后不再强弹
                 if (vm.consumeBatchAutoShow(session.runId)) showBatchPanel = true
             }
@@ -522,7 +524,7 @@ private fun ChatPageContent(
                 onBatchRegenerate = { target ->
                     // 已有未处理的批量结果时直接打开工作台，不再弹一次配置窗
                     val session = batchSession
-                    if (session != null && session.conversationId == id.toString()) {
+                    if (session != null && session.conversationId == conversation.id.toString()) {
                         showBatchPanel = true
                     } else {
                         batchTarget = target
@@ -653,13 +655,15 @@ private fun ChatPageContent(
         if (showSystemPromptInspector) {
             SystemPromptInspectorDialog(
                 blocks = vm.systemPromptBlocks,
-                presets = setting.systemPromptPresets,
+                presets = BuiltinPromptPresets.all + setting.systemPromptPresets,
                 onDismiss = { showSystemPromptInspector = false },
                 onSaveOverride = { blockId, content -> vm.saveSystemPromptOverride(blockId, content) },
                 onSavePreset = { name -> vm.saveSystemPromptPreset(name) },
                 onApplyPreset = { preset -> vm.applySystemPromptPreset(preset) },
                 onDeletePreset = { id -> vm.deleteSystemPromptPreset(id) },
                 onResetAll = { vm.resetAllSystemPromptOverrides() },
+                applyNotice = vm.systemPromptApplyNotice,
+                onDismissApplyNotice = { vm.dismissSystemPromptApplyNotice() },
             )
         }
 
