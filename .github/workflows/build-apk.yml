@@ -51,11 +51,13 @@ jobs:
       - name: Build release APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease -x :web:buildWebUi --no-daemon
+          # 3.1.1 起有 github / play 两个渠道，只打 github 那条
+          ./gradlew :app:assembleGithubRelease -x :web:buildWebUi --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: rikkahub-apk
-          path: app/build/outputs/apk/release/*.apk
+          # 渠道化之后产物在 apk/<flavor>/release/ 下
+          path: app/build/outputs/apk/github/release/*.apk
           if-no-files-found: error
