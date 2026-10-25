@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
@@ -52,6 +53,37 @@ fun SystemPromptInspectorDialog(
     val drafts = remember { mutableStateMapOf<String, String>() }
     var presetName by remember { mutableStateOf("") }
     var showPresetInput by remember { mutableStateOf(false) }
+    // 待确认「恢复跟随」的块：清空改写会丢掉当前编辑内容
+    var confirmRestore by remember { mutableStateOf<SystemPromptBlock?>(null) }
+
+    // 二次确认：清空改写等于把这一块交还给助手/记忆等来源
+    confirmRestore?.let { block ->
+        AlertDialog(
+            onDismissRequest = { confirmRestore = null },
+            title = { Text("恢复跟随？") },
+            text = {
+                Text(
+                    if (block.dynamic) {
+                        "这一块的内容会重新由运行时自动生成（记忆、技能等），数据变化时也会跟着变。刚才的改写会丢失。"
+                    } else {
+                        "这一块会重新跟随助手的系统提示词，助手以后改动这里也会跟着变。刚才的改写会丢失。"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRestore = null
+                        drafts.remove(block.id)
+                        onSaveOverride(block.id, null)
+                    },
+                ) { Text("恢复跟随") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRestore = null }) { Text("取消") }
+            },
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -81,16 +113,16 @@ fun SystemPromptInspectorDialog(
                         onDraftChange = { drafts[block.id] = it },
                         onEditCancel = { drafts.remove(block.id) },
                         onEditConfirm = {
-                            val value = drafts[block.id]
-                            if (value != null) {
-                                drafts.remove(block.id)
+                            val value = drafts[block.id] ?: ""
+                            drafts.remove(block.id)
+                            if (value.isBlank()) {
+                                // 清空 = 交还给助手/记忆，需要确认
+                                confirmRestore = block
+                            } else {
                                 onSaveOverride(block.id, value)
                             }
                         },
-                        onRestoreDefault = {
-                            drafts.remove(block.id)
-                            onSaveOverride(block.id, null)
-                        },
+                        onRestoreDefault = { confirmRestore = block },
                     )
                 }
 
@@ -197,11 +229,18 @@ private fun BlockCard(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
-                if (block.dynamic) {
-                    AssistChip(onClick = {}, label = { Text("动态", style = MaterialTheme.typography.labelSmall) })
-                }
                 if (block.isOverridden) {
-                    AssistChip(onClick = {}, label = { Text("已改", style = MaterialTheme.typography.labelSmall) })
+                    AssistChip(onClick = {}, label = { Text("已改写", style = MaterialTheme.typography.labelSmall) })
+                } else {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                text = if (block.dynamic) "跟随·动态" else "跟随助手",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        },
+                    )
                 }
             }
 
@@ -214,26 +253,49 @@ private fun BlockCard(
                         .heightIn(min = 120.dp, max = 260.dp)
                         .verticalScroll(rememberScrollState()),
                     textStyle = MaterialTheme.typography.bodySmall,
+                    supportingText = {
+                        Text(
+                            text = "清空后保存＝恢复跟随，由助手/运行时重新提供内容",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = onEditConfirm) { Text("保存") }
                     TextButton(onClick = onEditCancel) { Text("取消") }
                     if (block.isOverridden) {
-                        TextButton(onClick = onRestoreDefault) { Text("恢复默认") }
+                        TextButton(onClick = onRestoreDefault) { Text("恢复跟随") }
                     }
                 }
             } else {
+                // 跟随状态下用斜体淡色，和「已改写」在视觉上区分开
                 Text(
                     text = block.content.ifBlank { "（这一块当前为空）" },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (block.isOverridden) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    },
+                    fontStyle = if (block.isOverridden) FontStyle.Normal else FontStyle.Italic,
                     maxLines = 6,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (!block.isOverridden) {
+                    Text(
+                        text = if (block.dynamic) {
+                            "内容由运行时生成，数据变化时这里会自动更新"
+                        } else {
+                            "跟随助手的系统提示词，助手改动后会同步变化"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = onEditStart) { Text("编辑") }
                     if (block.isOverridden) {
-                        TextButton(onClick = onRestoreDefault) { Text("恢复默认") }
+                        TextButton(onClick = onRestoreDefault) { Text("恢复跟随") }
                     }
                     Text(
                         text = "${block.content.length} 字符",

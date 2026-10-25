@@ -329,13 +329,16 @@ class ChatVM(
         }
     }
 
-    /** content 为 null 表示恢复默认（清除该块的改写） */
+    /**
+     * content 为 null 或全空白时表示「恢复跟随」：移除改写，重新跟随助手/记忆等来源。
+     * 非空才写入改写，所以清空编辑框不会把这一块覆盖成空字符串。
+     */
     fun saveSystemPromptOverride(blockId: String, content: String?) {
         viewModelScope.launch {
             settingsStore.update { current ->
                 val others = current.systemPromptOverrides.filter { it.blockId != blockId }
                 current.copy(
-                    systemPromptOverrides = if (content == null) {
+                    systemPromptOverrides = if (content.isNullOrBlank()) {
                         others
                     } else {
                         others + SystemPromptOverride(blockId, content)

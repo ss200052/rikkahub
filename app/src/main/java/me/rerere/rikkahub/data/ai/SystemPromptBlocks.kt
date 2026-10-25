@@ -29,12 +29,14 @@ data class SystemPromptBlock(
     val title: String,
     /** 实际会注入的内容：有覆盖时是覆盖值，否则是默认值 */
     val content: String,
-    /** 默认内容，用于展示与「恢复默认」 */
+    /** 默认内容，用于展示与「恢复跟随」 */
     val defaultContent: String,
     /** 内容是否由运行期数据生成（记忆内容、技能列表等） */
     val dynamic: Boolean = false,
+    /** 是否存在用户改写。不能靠比较内容判断：改写值可能恰好等于某次默认值 */
+    val hasOverride: Boolean = false,
 ) {
-    val isOverridden: Boolean get() = content != defaultContent
+    val isOverridden: Boolean get() = hasOverride
 
     /** 预览时能直接显示吗：空内容也要占位，避免用户以为漏了一块 */
     val displayText: String get() = content

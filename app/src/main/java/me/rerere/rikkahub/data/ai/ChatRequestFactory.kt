@@ -204,10 +204,13 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
     ): List<SystemPromptBlock> {
         val assistant = turn.assistant
-        val overrides = turn.settings.systemPromptOverrides.associate { it.blockId to it.content }
+        // 空白改写按「没有改写」处理：这一块继续跟随助手 / 记忆等来源
+        val overrides = turn.settings.systemPromptOverrides
+            .filter { it.content.isNotBlank() }
+            .associate { it.blockId to it.content }
 
         fun SystemPromptBlock.applyOverride(): SystemPromptBlock =
-            overrides[id]?.let { copy(content = it) } ?: this
+            overrides[id]?.let { copy(content = it, hasOverride = true) } ?: this
 
         val blocks = mutableListOf<SystemPromptBlock>()
 
