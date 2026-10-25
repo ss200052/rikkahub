@@ -7,6 +7,8 @@ import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.asr.ASRProviderSetting
 import me.rerere.mediagen.provider.MediaGenerationProviderSetting
+import me.rerere.rikkahub.data.ai.SystemPromptOverride
+import me.rerere.rikkahub.data.ai.SystemPromptPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
@@ -87,6 +89,10 @@ data class Settings(
     val ftsSchemaVersion: Int = 0,
     // 批量重新生成在后台跑到命中时是否发通知
     val notifyBatchHitInBackground: Boolean = true,
+    // 系统提示词各块的覆盖改写（blockId -> 内容）
+    val systemPromptOverrides: List<SystemPromptOverride> = emptyList(),
+    // 保存下来的整套系统提示词方案
+    val systemPromptPresets: List<SystemPromptPreset> = emptyList(),
 ) {
     companion object {
         // 构造一个用于初始化的settings, 但它不能用于保存，防止使用初始值存储

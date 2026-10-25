@@ -193,7 +193,72 @@ class ChatRequestFactory(
         return summary.ifBlank { error("Failed to generate compressed summary") }
     }
 
-    /** 一步请求实际发出的消息和参数；正常对话和压缩共用，二者的请求前缀必须一致才能命中提示词缓存 */
+    /**
+     * 把这一轮的系统提示词拆成按注入顺序排列的块。
+     *
+     * 正常组装和「查看当前生效的提示词」共用这里，保证预览和实际发出的内容同源。
+     * 用户的覆盖值会替换对应块的内容。
+     */
+    suspend fun buildSystemPromptBlocks(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+    ): List<SystemPromptBlock> {
+        val assistant = turn.assistant
+        val overrides = turn.settings.systemPromptOverrides.associate { it.blockId to it.content }
+
+        fun SystemPromptBlock.applyOverride(): SystemPromptBlock =
+            overrides[id]?.let { copy(content = it) } ?: this
+
+        val blocks = mutableListOf<SystemPromptBlock>()
+
+        // ① 助手/对话自己的提示词
+        val basePrompt =
+            if (assistant.allowConversationSystemPrompt && !turn.conversationSystemPrompt.isNullOrBlank()) {
+                turn.conversationSystemPrompt
+            } else {
+                assistant.systemPrompt
+            }
+        blocks += SystemPromptBlock(
+            id = SystemPromptBlockId.BASE,
+            title = if (assistant.allowConversationSystemPrompt && !turn.conversationSystemPrompt.isNullOrBlank()) {
+                "对话系统提示词"
+            } else {
+                "助手系统提示词"
+            },
+            content = basePrompt,
+            defaultContent = basePrompt,
+        ).applyOverride()
+
+        // ② 记忆
+        if (assistant.enableMemory) {
+            val memory = buildMemoryPrompt(turn.memories)
+            blocks += SystemPromptBlock(
+                id = SystemPromptBlockId.MEMORY,
+                title = "记忆系统",
+                content = memory,
+                defaultContent = memory,
+                dynamic = true,
+            ).applyOverride()
+        }
+
+        // ③ 各工具自带的提示词
+        turn.tools.forEach { tool ->
+            val prompt = tool.systemPrompt(turn.model, messages)
+            if (prompt.isNotBlank()) {
+                blocks += SystemPromptBlock(
+                    id = SystemPromptBlockId.TOOL_PREFIX + tool.name,
+                    title = "工具：${tool.name}",
+                    content = prompt,
+                    defaultContent = prompt,
+                    dynamic = true,
+                ).applyOverride()
+            }
+        }
+
+        return blocks
+    }
+
+    /** 一步请求实际发出的消息和参数；正常对话和压缩共用，二者的前缀必须一致才能命中提示词缓存 */
     private suspend fun buildStep(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
@@ -201,28 +266,11 @@ class ChatRequestFactory(
     ): StepRequest {
         val assistant = turn.assistant
         val requestMessages = buildList {
-            val system = buildString {
-                val effectiveSystemPrompt =
-                    if (assistant.allowConversationSystemPrompt && !turn.conversationSystemPrompt.isNullOrBlank()) {
-                        turn.conversationSystemPrompt
-                    } else {
-                        assistant.systemPrompt
-                    }
-                if (effectiveSystemPrompt.isNotBlank()) {
-                    append(effectiveSystemPrompt)
-                }
-
-                // 记忆
-                if (assistant.enableMemory) {
-                    appendLine()
-                    append(buildMemoryPrompt(turn.memories))
-                }
-                // 工具prompt
-                turn.tools.forEach { tool ->
-                    appendLine()
-                    append(tool.systemPrompt(turn.model, messages))
-                }
-            }
+            // 块与预览同源；空块直接跳过，避免多余的空白行
+            val system = buildSystemPromptBlocks(turn, messages)
+                .map { it.content.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString("\n\n")
             if (system.isNotBlank()) {
                 add(UIMessage.system(prompt = system).copy(isSynthetic = true))
             }

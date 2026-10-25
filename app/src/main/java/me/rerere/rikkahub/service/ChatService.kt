@@ -46,6 +46,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.ChatRequestFactory
 import me.rerere.rikkahub.data.ai.ChatTurnContext
 import me.rerere.rikkahub.data.ai.ConversationMetaGenerator
+import me.rerere.rikkahub.data.ai.SystemPromptBlock
 import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
 import me.rerere.rikkahub.data.ai.TranslationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
@@ -693,6 +694,16 @@ class ChatService(
     fun stopBatchAll() = batchController.stopAll()
 
     /** 重跑某一路（失败、截断都能再来一次） */
+    /** 读取当前生效的系统提示词分块，供「查看系统提示词」界面预览 */
+    suspend fun buildSystemPromptBlocks(conversationId: Uuid): List<SystemPromptBlock> {
+        val session = sessionManager.getOrCreate(conversationId)
+        ensureInitialized(session)
+        val conversation = session.state.value
+        val settings = settingsStore.awaitLoaded()
+        val turn = requestFactory.createContext(settings, conversation)
+        return requestFactory.buildSystemPromptBlocks(turn, conversation.currentMessages)
+    }
+
     /** 重跑某一路（失败、截断都能再来一次）；同样挂前台服务，切后台不会被系统回收 */
     fun rerunBatchLane(index: Int) {
         val session = batchController.session.value ?: return

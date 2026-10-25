@@ -29,6 +29,9 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.SystemPromptBlock
+import me.rerere.rikkahub.data.ai.SystemPromptOverride
+import me.rerere.rikkahub.data.ai.SystemPromptPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.BatchSession
 import me.rerere.rikkahub.data.batch.CommitTarget
@@ -311,6 +314,72 @@ class ChatVM(
     fun setBatchHitNotification(enabled: Boolean) {
         viewModelScope.launch {
             settingsStore.update { it.copy(notifyBatchHitInBackground = enabled) }
+        }
+    }
+
+    // ---- 系统提示词检查器 ----
+
+    var systemPromptBlocks by mutableStateOf<List<SystemPromptBlock>>(emptyList())
+        private set
+
+    /** 读取当前生效的全部提示词块 */
+    fun loadSystemPromptBlocks() {
+        viewModelScope.launch {
+            systemPromptBlocks = chatService.buildSystemPromptBlocks(_conversationId)
+        }
+    }
+
+    /** content 为 null 表示恢复默认（清除该块的改写） */
+    fun saveSystemPromptOverride(blockId: String, content: String?) {
+        viewModelScope.launch {
+            settingsStore.update { current ->
+                val others = current.systemPromptOverrides.filter { it.blockId != blockId }
+                current.copy(
+                    systemPromptOverrides = if (content == null) {
+                        others
+                    } else {
+                        others + SystemPromptOverride(blockId, content)
+                    },
+                )
+            }
+            loadSystemPromptBlocks()
+        }
+    }
+
+    /** 把当前所有改写存成一套方案 */
+    fun saveSystemPromptPreset(name: String) {
+        viewModelScope.launch {
+            settingsStore.update { current ->
+                current.copy(
+                    systemPromptPresets = current.systemPromptPresets + SystemPromptPreset(
+                        id = Uuid.random().toString(),
+                        name = name,
+                        overrides = current.systemPromptOverrides,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun applySystemPromptPreset(preset: SystemPromptPreset) {
+        viewModelScope.launch {
+            settingsStore.update { it.copy(systemPromptOverrides = preset.overrides) }
+            loadSystemPromptBlocks()
+        }
+    }
+
+    fun deleteSystemPromptPreset(id: String) {
+        viewModelScope.launch {
+            settingsStore.update { current ->
+                current.copy(systemPromptPresets = current.systemPromptPresets.filter { it.id != id })
+            }
+        }
+    }
+
+    fun resetAllSystemPromptOverrides() {
+        viewModelScope.launch {
+            settingsStore.update { it.copy(systemPromptOverrides = emptyList()) }
+            loadSystemPromptBlocks()
         }
     }
 

@@ -90,6 +90,7 @@ import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.ArrowUp02
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.Fullscreen
+import me.rerere.hugeicons.stroke.Layers01
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
@@ -145,6 +146,8 @@ fun ChatInput(
     onStartVoiceMode: (() -> Unit)? = null,
     voiceState: VoiceSessionState = VoiceSessionState(),
     onStopVoiceMode: () -> Unit = {},
+    // 打开「当前生效的系统提示词」检查器
+    onInspectSystemPrompt: (() -> Unit)? = null,
 ) {
     val toaster = LocalToaster.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -329,6 +332,21 @@ fun ChatInput(
                                     },
                                     onlyIcon = true,
                                 )
+                            }
+
+                            // 查看当前生效的全部系统提示词
+                            if (onInspectSystemPrompt != null) {
+                                IconButton(
+                                    onClick = onInspectSystemPrompt,
+                                    modifier = Modifier.size(30.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = HugeIcons.Layers01,
+                                        contentDescription = "查看系统提示词",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
 
                         }

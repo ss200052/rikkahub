@@ -78,6 +78,7 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
+import me.rerere.rikkahub.ui.components.ai.SystemPromptInspectorDialog
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.SearchMode
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
@@ -363,6 +364,7 @@ private fun ChatPageContent(
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
     var showFilesSheet by remember { mutableStateOf(false) }
+    var showSystemPromptInspector by remember { mutableStateOf(false) }
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
@@ -418,6 +420,10 @@ private fun ChatPageContent(
                     onStartVoiceMode = onStartVoiceMode,
                     voiceState = voiceState,
                     onStopVoiceMode = vm.voiceSession::stop,
+                    onInspectSystemPrompt = {
+                        vm.loadSystemPromptBlocks()
+                        showSystemPromptInspector = true
+                    },
                     state = inputState,
                     messageQueue = messageQueue,
                     onRemoveQueuedMessage = vm::removeQueuedMessage,
@@ -635,6 +641,20 @@ private fun ChatPageContent(
                 attachmentPickerActions = attachmentPickerActions,
                 onStartVoiceMode = onStartVoiceMode,
                 onDismiss = { showFilesSheet = false },
+            )
+        }
+
+        // 当前生效的系统提示词：分块查看、逐块改写、整套存为方案
+        if (showSystemPromptInspector) {
+            SystemPromptInspectorDialog(
+                blocks = vm.systemPromptBlocks,
+                presets = setting.systemPromptPresets,
+                onDismiss = { showSystemPromptInspector = false },
+                onSaveOverride = { blockId, content -> vm.saveSystemPromptOverride(blockId, content) },
+                onSavePreset = { name -> vm.saveSystemPromptPreset(name) },
+                onApplyPreset = { preset -> vm.applySystemPromptPreset(preset) },
+                onDeletePreset = { id -> vm.deleteSystemPromptPreset(id) },
+                onResetAll = { vm.resetAllSystemPromptOverrides() },
             )
         }
 
