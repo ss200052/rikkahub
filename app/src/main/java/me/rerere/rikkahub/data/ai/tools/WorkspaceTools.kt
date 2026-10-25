@@ -1,8 +1,8 @@
 package me.rerere.rikkahub.data.ai.tools
 
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -11,6 +11,7 @@ import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.DiffMetadata
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.toMetadata
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.utils.generateUnifiedDiff
@@ -127,7 +128,7 @@ private fun createWriteFileTool(
     execute = {
         val params = it.jsonObject
         val path = params.absolutePath("path")
-        val text = params.string("text") ?: error("text is required")
+        val text = params.string("text") ?: error(PromptRuntime.text("common.textRequired"))
         val overwrite = params["overwrite"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
         val entry = workspaceRepository.writeTextInRootfs(workspaceId, path, text, overwrite)
         listOf(UIMessagePart.Text(entry.toJson().toString()))
@@ -170,17 +171,17 @@ private fun createEditFileTool(
     execute = {
         val params = it.jsonObject
         val path = params.absolutePath("path")
-        val oldText = params.string("old_text") ?: error("old_text is required")
-        val newText = params.string("new_text") ?: error("new_text is required")
+        val oldText = params.string("old_text") ?: error(PromptRuntime.text("workspace.oldTextRequired"))
+        val newText = params.string("new_text") ?: error(PromptRuntime.text("workspace.newTextRequired"))
         val replaceAll = params["replace_all"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-        require(oldText.isNotEmpty()) { "old_text must not be empty" }
+        require(oldText.isNotEmpty()) { PromptRuntime.text("workspace.oldTextEmpty") }
 
         val original = workspaceRepository.readTextInRootfs(workspaceId, path)
         // 逐级尝试 exact -> line_trimmed -> block_anchor 替换器, 见 TextReplacers.kt
         val result = try {
             replaceText(original, oldText, newText, replaceAll)
         } catch (e: IllegalArgumentException) {
-            error("${e.message} (path: $path)")
+            error(PromptRuntime.text("workspace.withPath", e.message.orEmpty(), path))
         }
         val entry = workspaceRepository.writeTextInRootfs(workspaceId, path, result.updated, overwrite = true)
         val diff = generateUnifiedDiff(original, result.updated, entry.path)
@@ -208,7 +209,9 @@ private fun createShellTool(
 ) = Tool(
     name = "workspace_shell",
     description = buildString {
-        append("Run a shell command in the assistant's bound workspace Rootfs. The workspace files area is mounted at /workspace. ")
+        append(
+            "Run a shell command in the assistant's bound workspace Rootfs. The workspace files area is mounted at /workspace. "
+        )
         append("Use cwd for a path relative to the workspace files root. ")
         if (!defaultCwd.isNullOrBlank()) {
             append("Defaults to '$defaultCwd'. ")
@@ -247,7 +250,7 @@ private fun createShellTool(
     needsApproval = { needsApproval("workspace_shell") },
     execute = {
         val params = it.jsonObject
-        val command = params.string("command") ?: error("command is required")
+        val command = params.string("command") ?: error(PromptRuntime.text("common.commandRequired"))
         val cwd = (params.string("cwd") ?: defaultCwd.orEmpty())
             .removePrefix("/workspace/").removePrefix("/workspace")
         val timeoutMillis = params.string("timeout")?.toLongOrNull()
@@ -353,14 +356,20 @@ private suspend fun WorkspaceRepository.runRootfsCommand(
         stdin = stdin,
     )
     if (result.timedOut) {
-        error("$action timed out")
+        error(PromptRuntime.text("workspace.timedOut", action))
     }
     if (result.exitCode != 0) {
         val message = result.stderr.ifBlank { result.stdout }.trim()
-        error(if (message.isBlank()) "$action failed with exit code ${result.exitCode}" else message)
+        error(
+            if (message.isBlank()) {
+                PromptRuntime.text("workspace.exitCode", action, result.exitCode.toString())
+            } else {
+                message
+            },
+        )
     }
     if (result.truncated) {
-        error("$action output is too large")
+        error(PromptRuntime.text("workspace.outputTooLarge", action))
     }
     return result
 }
@@ -397,7 +406,8 @@ private fun String.parseRootfsEntries(): List<WorkspaceFileEntry> {
 }
 
 private fun kotlinx.serialization.json.JsonObject.absolutePath(name: String): String {
-    val path = string(name)?.replace('\\', '/')?.trim() ?: error("$name is required")
+    val path = string(name)?.replace('\\', '/')?.trim()
+        ?: error(PromptRuntime.text("common.fieldRequired", name))
     require(path.isNotBlank()) { "$name is required" }
     require(path.startsWith("/")) { "$name must be an absolute path inside Rootfs" }
     require(!path.contains('\u0000')) { "$name contains invalid character" }

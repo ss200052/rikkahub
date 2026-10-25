@@ -68,7 +68,6 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
-import me.rerere.rikkahub.data.ai.BuiltinPromptPresets
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
@@ -655,9 +654,12 @@ private fun ChatPageContent(
         if (showSystemPromptInspector) {
             SystemPromptInspectorDialog(
                 blocks = vm.systemPromptBlocks,
-                presets = BuiltinPromptPresets.all + setting.systemPromptPresets,
+                presets = setting.systemPromptPresets,
+                schemeId = setting.promptSchemeId,
                 onDismiss = { showSystemPromptInspector = false },
-                onSaveOverride = { blockId, content -> vm.saveSystemPromptOverride(blockId, content) },
+                onSelectScheme = { id -> vm.selectPromptScheme(id) },
+                onSaveText = { blockId, content -> vm.saveSystemPromptText(blockId, content) },
+                onSaveSlots = { blockId, texts -> vm.saveSystemPromptSlots(blockId, texts) },
                 onSavePreset = { name -> vm.saveSystemPromptPreset(name) },
                 onApplyPreset = { preset -> vm.applySystemPromptPreset(preset) },
                 onDeletePreset = { id -> vm.deleteSystemPromptPreset(id) },

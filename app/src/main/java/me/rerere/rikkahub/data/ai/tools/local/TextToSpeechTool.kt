@@ -8,6 +8,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getSelectedTTSProvider
 import me.rerere.rikkahub.data.event.AppEvent
@@ -45,7 +46,7 @@ internal fun buildTextToSpeechTool(
     },
     execute = {
         val text = it.jsonObject["text"]?.jsonPrimitive?.contentOrNull
-            ?: error("text is required")
+            ?: error(PromptRuntime.text("common.textRequired"))
         eventBus.emit(AppEvent.Speak(text))
         val payload = buildJsonObject {
             put("success", true)

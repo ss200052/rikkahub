@@ -15,6 +15,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import me.rerere.rikkahub.data.model.MemoryFile
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.MemoryWriteResult
@@ -69,7 +70,7 @@ fun buildMemoryTools(
                 is JsonPrimitive -> listOfNotNull(path.contentOrNull)
                 else -> emptyList()
             }.take(MAX_READ_PATHS)
-            if (paths.isEmpty()) error("path is required")
+            if (paths.isEmpty()) error(PromptRuntime.text("memory.pathRequired"))
 
             val files = paths.associateWith { repository.getFile(assistantId, it) }
             toolOutput {
@@ -154,7 +155,7 @@ fun buildMemoryTools(
         execute = { args ->
             val path = args.string("path")
             val content = args.string("content")
-            if (content.isBlank()) error("content must not be blank")
+            if (content.isBlank()) error(PromptRuntime.text("memory.contentBlank"))
             guarded(content) {
                 repository.appendToFile(assistantId, path, content, args.string("if_version"))
             }.toToolOutput(path)
@@ -221,7 +222,8 @@ private fun stringSchema(description: String) = buildJsonObject {
 }
 
 private fun JsonElement.string(key: String): String =
-    (jsonObject[key] as? JsonPrimitive)?.contentOrNull ?: error("$key is required")
+    (jsonObject[key] as? JsonPrimitive)?.contentOrNull
+        ?: error(PromptRuntime.text("common.fieldRequired", key))
 
 private fun toolOutput(builder: JsonObjectBuilder.() -> Unit): List<UIMessagePart> =
     listOf(UIMessagePart.Text(buildJsonObject(builder).toString()))

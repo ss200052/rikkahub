@@ -5,6 +5,10 @@ import kotlinx.coroutines.CancellationException
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptComposer
+import me.rerere.rikkahub.data.ai.PromptSchemes
+import me.rerere.rikkahub.data.ai.PromptSegments
+import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.WorkspaceShellStatus
@@ -34,15 +38,16 @@ class WorkspaceReminderTransformer(
         // 与 ChatToolFactory.createWorkspaceToolsIfReady 保持一致: 仅在 shell 就绪时注入
         if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return messages
 
-        val prompt = ctx.settings.systemPromptOverrides
-            .firstOrNull { it.blockId == WORKSPACE_REMINDER_ID && it.content.isNotBlank() }
-            ?.content
-            ?: buildWorkspaceReminderContent(
-                repository = workspaceRepository,
-                workspaceId = workspaceId,
-                workspace = workspace,
-                cwd = ctx.workspaceCwd,
-            )
+        val override = ctx.settings.systemPromptOverrides
+            .firstOrNull { it.blockId == WORKSPACE_REMINDER_ID }
+        val prompt = renderWorkspaceReminder(
+            repository = workspaceRepository,
+            workspaceId = workspaceId,
+            workspace = workspace,
+            cwd = ctx.workspaceCwd,
+            schemeId = ctx.settings.promptSchemeId,
+            override = override,
+        )
 
         // 追加到第一条 system 消息; 若不存在则插入一条
         val systemIndex = messages.indexOfFirst { it.role == MessageRole.SYSTEM }
@@ -59,28 +64,58 @@ class WorkspaceReminderTransformer(
 }
 
 /**
- * 生成工作区提醒的完整正文（环境说明 + AGENTS.md 指令）。
+ * 渲染工作区提醒。
  *
- * 抽出来是为了让「查看当前生效的提示词」能显示真实内容，
- * 而不是一句「发送时才生成」的占位符——那等于把这段藏起来不给用户看。
+ * 骨架固定（[PromptSegments.WORKSPACE]），`«»` 里的说明文字按方案取，
+ * `‹›` 里的环境值（工作区名、发行版、shell、工作目录、AGENTS.md）按当前状态填。
+ * 没有发行版就没有那一组，没有工作目录就没有那一行——条件由数据决定，与方案无关。
+ * 预览与实发都走这里，保证两边一致。
  */
-internal suspend fun buildWorkspaceReminderContent(
+internal suspend fun renderWorkspaceReminder(
     repository: WorkspaceRepository,
     workspaceId: String,
     workspace: WorkspaceEntity,
     cwd: String?,
-): String = buildWorkspacePrompt(
-    workspace = workspace,
-    shell = repository.rootfsShell(workspaceId),
-    distro = readDistroName(repository, workspaceId),
-    cwd = cwd,
-) + buildAgentsPrompt(repository, workspaceId, cwd)
+    schemeId: String = PromptSchemes.ENGLISH.id,
+    override: SystemPromptOverride? = null,
+): String {
+    val shell = repository.rootfsShell(workspaceId)
+    val distro = readDistroName(repository, workspaceId)
+    val agents = readAgentsSources(repository, workspaceId, cwd)
+    val isBash = shell == "/bin/bash"
 
-internal suspend fun buildAgentsPrompt(
+    val active = buildSet {
+        add("head")
+        add("body")
+        add("close")
+        if (distro != null) add("distro")
+        add(if (isBash) "shell_bash" else "shell_posix")
+        if (!cwd.isNullOrBlank()) add("cwd")
+        if (agents.isNotEmpty()) add("agents")
+    }
+
+    return PromptComposer.compose(
+        groups = PromptSegments.WORKSPACE,
+        activeGroupIds = active,
+        schemeTexts = PromptSchemes.of(schemeId).texts,
+        slotOverrides = override?.slots.orEmpty(),
+        tokenValues = mapOf(
+            "workspace_name" to workspace.name,
+            "distro" to (distro ?: ""),
+            "shell" to shell,
+            "cwd" to (cwd ?: ""),
+            "agents_path" to agents.joinToString(" | ") { it.first },
+            "agents_content" to agents.joinToString("\n\n") { it.second },
+        ),
+    )
+}
+
+/** 读取 AGENTS.md 的来源与内容，顺序固定：用户级、工作区根、会话当前目录 */
+internal suspend fun readAgentsSources(
     repository: WorkspaceRepository,
     workspaceId: String,
     cwd: String?,
-): String {
+): List<Pair<String, String>> {
     // ProotShellRunner 将 HOME 固定为 /root；相对 PWD 按 /workspace 解析。
     val workingDirectory = Paths.get("/workspace")
         .resolve(cwd?.takeIf { it.isNotBlank() } ?: ".")
@@ -90,21 +125,8 @@ internal suspend fun buildAgentsPrompt(
         "/workspace/AGENTS.md",
         workingDirectory.resolve("AGENTS.md").toString(),
     )
-    val instructions = paths.mapNotNull { path ->
+    return paths.mapNotNull { path ->
         readRootfsText(repository, workspaceId, path, MAX_AGENTS_BYTES)?.let { path to it }
-    }
-    if (instructions.isEmpty()) return ""
-    return buildString {
-        appendLine()
-        appendLine()
-        appendLine("<workspace_instructions>")
-        appendLine("Follow the AGENTS.md instructions below.")
-        instructions.forEach { (path, content) ->
-            appendLine()
-            appendLine("AGENTS.md source: $path")
-            appendLine(content)
-        }
-        append("</workspace_instructions>")
     }
 }
 
@@ -152,60 +174,6 @@ internal fun parseOsReleaseName(content: String): String? {
         ?: listOfNotNull(values["NAME"], values["VERSION_ID"]).joinToString(" ")
     // 内容来自 Rootfs 内的文件, 拼进系统提示前去掉控制字符并限制长度
     return name.filterNot { it.isISOControl() }.trim().take(MAX_DISTRO_NAME_LENGTH).ifBlank { null }
-}
-
-private fun buildWorkspacePrompt(
-    workspace: WorkspaceEntity,
-    shell: String,
-    distro: String?,
-    cwd: String? = null,
-): String = buildString {
-    appendLine("<workspace>")
-    appendLine(
-        "You have access to a persistent Linux workspace named \"${workspace.name}\", running in a sandboxed proot rootfs environment."
-    )
-    appendLine(
-        "- The workspace files area is mounted at `/workspace`. Use it as your working directory; files written there persist across turns of this conversation."
-    )
-    appendLine(
-        "- All paths passed to workspace tools must be absolute and inside the Rootfs (for example `/workspace/notes.md`)."
-    )
-    if (distro != null) {
-        appendLine(
-            "- The Rootfs distribution is $distro. Use its native package manager when you need to install missing tools."
-        )
-    }
-    if (shell == "/bin/bash") {
-        appendLine("- `workspace_shell` runs commands with `/bin/bash`.")
-    } else {
-        appendLine(
-            "- `workspace_shell` runs commands with `$shell`, a POSIX shell. Bash is not installed, so avoid bash-only syntax such as arrays, here-strings (`<<<`) and brace expansion."
-        )
-    }
-    appendLine("- Available tools:")
-    appendLine("  - `workspace_read_file`: read file contents.")
-    appendLine(
-        "  - `workspace_write_file` / `workspace_edit_file`: create files, or make precise edits to existing files."
-    )
-    appendLine("  - `workspace_shell`: run shell commands (the files area is mounted at /workspace).")
-    appendLine(
-        "- Prefer `workspace_shell` for tasks that standard Unix tools handle well, and prefer `workspace_edit_file` for targeted edits over rewriting whole files."
-    )
-    appendLine(
-        "- The skills directory is mounted at `/skills`. Each skill is a subdirectory `/skills/<skill-name>/` containing a `SKILL.md` (with `name` and `description` frontmatter) plus any supporting files. Read a skill's `SKILL.md` before using it, and follow its instructions."
-    )
-    appendLine(
-        "- Built-in skills shipped with the app are mounted at `/builtin_skills/<skill-name>/` with the same layout. Treat `/builtin_skills` as READ-ONLY: you may read files and run scripts there, but never modify, overwrite, or delete anything. A skill in `/skills` with the same name overrides the built-in one."
-    )
-    appendLine(
-        "- Files the user uploaded are mounted at `/upload`. Treat `/upload` as READ-ONLY: read uploaded files from `/upload/<file-name>`, but never modify, overwrite, or delete anything there. If you need to change an uploaded file, copy it into `/workspace` first and edit the copy."
-    )
-    if (!cwd.isNullOrBlank()) {
-        appendLine(
-            "- Current working directory: `$cwd`. Use this as the default context for file operations and shell commands."
-        )
-    }
-    append("</workspace>")
 }
 
 private fun UIMessage.appendText(extra: String): UIMessage {

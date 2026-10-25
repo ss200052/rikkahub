@@ -15,6 +15,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.utils.hasUsageStatsPermission
@@ -83,8 +84,7 @@ internal fun buildScreenTimeTool(context: Context, eventBus: AppEventBus): Tool 
                 put("error", "NO_PERMISSION")
                 put(
                     "message",
-                    "Usage access permission is not granted. The system settings page has been " +
-                        "opened; please ask the user to enable 'Usage access' for this app and try again."
+                    PromptRuntime.text("screentime.noPermission")
                 )
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
@@ -105,14 +105,16 @@ internal fun buildScreenTimeTool(context: Context, eventBus: AppEventBus): Tool 
             endTime = endRaw?.let { raw -> parseUsageTime(raw, zone) } ?: now
             startTime = if (beginRaw != null) {
                 parseUsageTime(beginRaw, zone)
-            } else when (rangePreset) {
-                "week" -> now.minusDays(7)
-                else -> now.toLocalDate().atStartOfDay(zone)
+            } else {
+                when (rangePreset) {
+                    "week" -> now.minusDays(7)
+                    else -> now.toLocalDate().atStartOfDay(zone)
+                }
             }
         } catch (e: Exception) {
             val payload = buildJsonObject {
                 put("error", "INVALID_TIME")
-                put("message", e.message ?: "Invalid time format for begin/end.")
+                put("message", e.message ?: PromptRuntime.text("screentime.invalidTime"))
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
         }
@@ -120,7 +122,7 @@ internal fun buildScreenTimeTool(context: Context, eventBus: AppEventBus): Tool 
         if (!startTime.isBefore(endTime)) {
             val payload = buildJsonObject {
                 put("error", "INVALID_RANGE")
-                put("message", "begin must be earlier than end.")
+                put("message", PromptRuntime.text("screentime.invalidRange"))
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
         }
@@ -218,8 +220,8 @@ private fun computeForegroundTime(
         when (event.eventType) {
             UsageEvents.Event.MOVE_TO_FOREGROUND -> {
                 if (event.packageName != currentPkg) {
-                    settle(event.timeStamp)         // 先结算上一个前台 App
-                    currentPkg = event.packageName  // 再开始为新 App 计时
+                    settle(event.timeStamp) // 先结算上一个前台 App
+                    currentPkg = event.packageName // 再开始为新 App 计时
                     currentStart = event.timeStamp
                 }
             }

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import me.rerere.rikkahub.utils.readClipboardText
 import me.rerere.rikkahub.utils.writeClipboardText
 
@@ -45,7 +46,8 @@ internal fun buildClipboardTool(context: Context): Tool = Tool(
     },
     execute = {
         val params = it.jsonObject
-        val action = params["action"]?.jsonPrimitive?.contentOrNull ?: error("action is required")
+        val action =
+            params["action"]?.jsonPrimitive?.contentOrNull ?: error(PromptRuntime.text("common.actionRequired"))
         when (action) {
             "read" -> {
                 val payload = buildJsonObject {
@@ -55,7 +57,8 @@ internal fun buildClipboardTool(context: Context): Tool = Tool(
             }
 
             "write" -> {
-                val text = params["text"]?.jsonPrimitive?.contentOrNull ?: error("text is required")
+                val text =
+                    params["text"]?.jsonPrimitive?.contentOrNull ?: error(PromptRuntime.text("common.textRequired"))
                 context.writeClipboardText(text)
                 val payload = buildJsonObject {
                     put("success", true)

@@ -30,40 +30,65 @@ enum class PromptSegmentGroup(val label: String) {
 }
 
 /**
- * 系统提示词的一个块。
+ * 请求体里的一个可查看、可改写的单元。
  *
- * [defaultContent] 是当前实际会注入的内容；[content] 是可被用户覆盖后的值。
- * 两者相同表示没有覆盖。动态块（记忆、技能列表）每次组装都会重新生成，
- * 一旦被覆盖就不再跟随数据变化。
+ * 两种形态并存：
+ * - 纯文本文段（助手提示词、工具描述这类）：整段就是一个可编辑字符串，[parts] 为空；
+ * - 分部件段（时间提醒、工作区提醒、技能清单、记忆）：由文本片段与不可编辑的数据块交替组成，
+ *   [parts] 给出结构，[slotTexts] 给出每个文本片段当前的内容。
+ *
+ * [content] 始终是「按当前数据拼好的成品」，只用来展示与核对，不用于编辑。
  */
 data class SystemPromptBlock(
     val id: String,
     val title: String,
-    /** 实际会注入的内容：有覆盖时是覆盖值，否则是默认值 */
+    /** 实际会注入的内容：按当前方案与当前数据拼好的成品 */
     val content: String,
-    /** 默认内容，用于展示与「恢复跟随」 */
+    /** 默认方案（英文）下拼出来的成品 */
     val defaultContent: String,
-    /** 内容是否由运行期数据生成（记忆内容、技能列表等） */
+    /** 内容是否由运行期数据生成 */
     val dynamic: Boolean = false,
-    /** 是否存在用户改写。不能靠比较内容判断：改写值可能恰好等于某次默认值 */
+    /** 是否存在用户改写 */
     val hasOverride: Boolean = false,
     /** 这一块在请求体的哪个位置 */
     val group: PromptSegmentGroup = PromptSegmentGroup.SYSTEM,
     /** 工具名这类契约字段不可编辑 */
     val editable: Boolean = true,
+    /** 分部件段的部件结构；纯文本段为空 */
+    val parts: List<PromptGroup> = emptyList(),
+    /** 每个文本片段当前生效的文字（已叠加方案与用户改写） */
+    val slotTexts: Map<String, String> = emptyMap(),
 ) {
     val isOverridden: Boolean get() = hasOverride
+
+    /** 这一块是不是按部件排布的 */
+    val isTokenized: Boolean get() = parts.isNotEmpty()
+
+    /** 分部件段里所有文本片段的标识，按出现顺序 */
+    val slots: List<String> get() = PromptComposer.slots(parts)
+
+    /** 分部件段里所有数据块的标识，按出现顺序 */
+    val tokens: List<String> get() = PromptComposer.tokens(parts)
 
     /** 预览时能直接显示吗：空内容也要占位，避免用户以为漏了一块 */
     val displayText: String get() = content
 }
 
-/** 用户对某个块的改写 */
+/**
+ * 用户对某个块的改写。
+ *
+ * 纯文本段用 [content]；分部件段用 [slots]，键是文本片段的标识。
+ * 两者都为空表示没有改写，这一块跟随默认方案。
+ */
 @Serializable
 data class SystemPromptOverride(
     val blockId: String,
-    val content: String,
-)
+    val content: String = "",
+    val slots: Map<String, String> = emptyMap(),
+) {
+    /** 这条改写是否有实际内容 */
+    val isMeaningful: Boolean get() = content.isNotBlank() || slots.values.any { it.isNotBlank() }
+}
 
 /** 一整套系统提示词方案，可整体保存与切换 */
 @Serializable

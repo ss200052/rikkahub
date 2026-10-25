@@ -17,6 +17,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import kotlin.time.Duration.Companion.milliseconds
 
 internal fun buildJavascriptTool(): Tool = Tool(
@@ -42,7 +43,7 @@ internal fun buildJavascriptTool(): Tool = Tool(
     },
     execute = {
         val code = requireNotNull(it.jsonObject["code"]?.jsonPrimitive?.contentOrNull) {
-            "JavaScript code is required"
+            PromptRuntime.text("js.codeRequired")
         }
         listOf(UIMessagePart.Text(evaluateJavascript(code)))
     }
@@ -123,16 +124,21 @@ internal suspend fun evaluateJavascript(
                 )
                 buildJsonObject {
                     if (logs.isNotEmpty()) {
-                        put("logs", logs.toString() + if (logsTruncated) "\n[Logs truncated]" else "")
+                        val truncatedSuffix = if (logsTruncated) {
+                            "\n" + PromptRuntime.text("js.logsTruncated")
+                        } else {
+                            ""
+                        }
+                        put("logs", logs.toString() + truncatedSuffix)
                     }
                     put("result", result?.let(::JsonPrimitive) ?: JsonNull)
                 }.toString()
             }
-        } ?: errorPayload("JavaScript execution timed out after ${timeoutMillis}ms")
+        } ?: errorPayload(PromptRuntime.text("js.timeout", timeoutMillis.toString()))
     } catch (_: QuickJsInterruptedException) {
-        errorPayload("JavaScript execution timed out after ${timeoutMillis}ms")
+        errorPayload(PromptRuntime.text("js.timeout", timeoutMillis.toString()))
     } catch (e: QuickJsException) {
-        errorPayload((e.message ?: "JavaScript execution failed").take(JS_MAX_LOG_CHARS))
+        errorPayload((e.message ?: PromptRuntime.text("js.failed")).take(JS_MAX_LOG_CHARS))
     }
 }
 

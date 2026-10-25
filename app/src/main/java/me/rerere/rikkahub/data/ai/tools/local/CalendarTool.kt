@@ -17,6 +17,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -87,8 +88,7 @@ internal fun buildCalendarQueryTool(context: Context): Tool = Tool(
                 put("error", "NO_PERMISSION")
                 put(
                     "message",
-                    "Calendar read permission is not granted. Please ask the user to enable " +
-                        "the calendar permission in the assistant's local tools settings."
+                    PromptRuntime.text("calendar.noReadPermission")
                 )
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
@@ -109,22 +109,26 @@ internal fun buildCalendarQueryTool(context: Context): Tool = Tool(
         try {
             startTime = if (beginRaw != null) {
                 parseCalendarTime(beginRaw, zone)
-            } else when (rangePreset) {
-                "week" -> now.toLocalDate().atStartOfDay(zone).minusDays(now.dayOfWeek.value.toLong() - 1)
-                "month" -> now.toLocalDate().withDayOfMonth(1).atStartOfDay(zone)
-                else -> now.toLocalDate().atStartOfDay(zone)
+            } else {
+                when (rangePreset) {
+                    "week" -> now.toLocalDate().atStartOfDay(zone).minusDays(now.dayOfWeek.value.toLong() - 1)
+                    "month" -> now.toLocalDate().withDayOfMonth(1).atStartOfDay(zone)
+                    else -> now.toLocalDate().atStartOfDay(zone)
+                }
             }
             endTime = if (endRaw != null) {
                 parseCalendarTime(endRaw, zone)
-            } else when (rangePreset) {
-                "week" -> startTime.plusDays(7)
-                "month" -> startTime.plusMonths(1)
-                else -> now.toLocalDate().plusDays(1).atStartOfDay(zone)
+            } else {
+                when (rangePreset) {
+                    "week" -> startTime.plusDays(7)
+                    "month" -> startTime.plusMonths(1)
+                    else -> now.toLocalDate().plusDays(1).atStartOfDay(zone)
+                }
             }
         } catch (e: Exception) {
             val payload = buildJsonObject {
                 put("error", "INVALID_TIME")
-                put("message", e.message ?: "Invalid time format for begin/end.")
+                put("message", e.message ?: PromptRuntime.text("calendar.invalidTime"))
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
         }
@@ -132,7 +136,7 @@ internal fun buildCalendarQueryTool(context: Context): Tool = Tool(
         if (!startTime.isBefore(endTime)) {
             val payload = buildJsonObject {
                 put("error", "INVALID_RANGE")
-                put("message", "begin must be earlier than end.")
+                put("message", PromptRuntime.text("calendar.invalidRange"))
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
         }
@@ -153,10 +157,14 @@ internal fun buildCalendarQueryTool(context: Context): Tool = Tool(
 
         val selection = if (query != null) {
             "${CalendarContract.Instances.TITLE} LIKE ?"
-        } else null
+        } else {
+            null
+        }
         val selectionArgs = if (query != null) {
             arrayOf("%$query%")
-        } else null
+        } else {
+            null
+        }
 
         val uri = CalendarContract.Instances.CONTENT_URI.buildUpon()
             .appendPath(startMs.toString())
@@ -275,8 +283,7 @@ internal fun buildCalendarCreateTool(context: Context): Tool = Tool(
                 put("error", "NO_PERMISSION")
                 put(
                     "message",
-                    "Calendar write permission is not granted. Please ask the user to enable " +
-                        "the calendar permission in the assistant's local tools settings."
+                    PromptRuntime.text("calendar.noWritePermission")
                 )
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
@@ -291,7 +298,7 @@ internal fun buildCalendarCreateTool(context: Context): Tool = Tool(
         if (title.isNullOrBlank() || startRaw.isNullOrBlank()) {
             val payload = buildJsonObject {
                 put("error", "MISSING_REQUIRED")
-                put("message", "Both 'title' and 'start' are required.")
+                put("message", PromptRuntime.text("calendar.missingRequired"))
             }
             return@Tool listOf(UIMessagePart.Text(payload.toString()))
         }
@@ -398,8 +405,12 @@ private fun hasCalendarReadPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
 
 private fun hasCalendarWritePermission(context: Context): Boolean =
-    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+    ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.READ_CALENDAR
+    ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) ==
+        PackageManager.PERMISSION_GRANTED
 
 private fun getDefaultCalendarId(context: Context): Long? {
     val projection = arrayOf(CalendarContract.Calendars._ID)

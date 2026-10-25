@@ -9,12 +9,12 @@ import me.rerere.asr.ASRProviderSetting
 import me.rerere.mediagen.provider.MediaGenerationProviderSetting
 import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
-import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TITLE_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TRANSLATION_PROMPT
+import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Lorebook
@@ -93,6 +93,8 @@ data class Settings(
     val systemPromptOverrides: List<SystemPromptOverride> = emptyList(),
     // 保存下来的整套系统提示词方案
     val systemPromptPresets: List<SystemPromptPreset> = emptyList(),
+    // 当前使用的提示词方案（en / zh）：决定各段槽位文字用哪种语言，骨架与数据块不受影响
+    val promptSchemeId: String = "en",
 ) {
     companion object {
         // 构造一个用于初始化的settings, 但它不能用于保存，防止使用初始值存储

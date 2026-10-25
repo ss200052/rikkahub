@@ -43,9 +43,10 @@ import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WORKSPACE_REMINDER_ID
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
-import me.rerere.rikkahub.data.ai.transformers.buildWorkspaceReminderContent
 import me.rerere.rikkahub.data.ai.transformers.collectInjections
 import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
+import me.rerere.rikkahub.data.ai.transformers.renderTimeReminder
+import me.rerere.rikkahub.data.ai.transformers.renderWorkspaceReminder
 import me.rerere.rikkahub.data.ai.transformers.transformThinkTags
 import me.rerere.rikkahub.data.ai.transformers.transforms
 import me.rerere.rikkahub.data.ai.transformers.visualTransforms
@@ -148,9 +149,11 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
     ): Pair<AgentRequest, AgentHooks> {
+        // 工具执行时拿不到设置，把方案记在运行期状态里，让工具返回的提示语跟着方案语言走
+        PromptRuntime.setScheme(turn.settings.promptSchemeId)
         // 工具文案的改写在这里生效：工具名不动，只换描述和参数说明
         val toolOverrides = turn.settings.systemPromptOverrides
-            .filter { it.content.isNotBlank() }
+            .filter { it.isMeaningful && it.content.isNotBlank() }
             .associate { it.blockId to it.content }
         val request = AgentRequest(
             provider = usageRecorder.wrap(
@@ -228,13 +231,17 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
     ): List<SystemPromptBlock> {
         val assistant = turn.assistant
-        // 空白改写按「没有改写」处理：这一块继续跟随助手 / 记忆等来源
-        val overrides = turn.settings.systemPromptOverrides
-            .filter { it.content.isNotBlank() }
-            .associate { it.blockId to it.content }
+        // 什么都没填的改写按「没有改写」处理
+        val overrideEntries = turn.settings.systemPromptOverrides
+            .filter { it.isMeaningful }
+            .associateBy { it.blockId }
 
-        fun SystemPromptBlock.applyOverride(): SystemPromptBlock =
-            overrides[id]?.let { copy(content = it, hasOverride = true) } ?: this
+        /** 纯文本段：整段就是一个可编辑字符串，改写直接替换它 */
+        fun SystemPromptBlock.applyTextOverride(): SystemPromptBlock {
+            val text = overrideEntries[id]?.content ?: return this
+            if (text.isBlank()) return this
+            return copy(content = text, hasOverride = true)
+        }
 
         val blocks = mutableListOf<SystemPromptBlock>()
 
@@ -254,31 +261,67 @@ class ChatRequestFactory(
             },
             content = basePrompt,
             defaultContent = basePrompt,
-        ).applyOverride()
+        ).applyTextOverride()
 
         // ② 记忆
         if (assistant.enableMemory) {
-            val memory = buildMemoryPrompt(turn.memories)
+            // 骨架固定，说明文字按方案取，记忆正文按数据填
+            val memoryOverride = overrideEntries[SystemPromptBlockId.MEMORY]
+            val memoSchemeId = turn.settings.promptSchemeId
             blocks += SystemPromptBlock(
                 id = SystemPromptBlockId.MEMORY,
                 title = "记忆系统",
-                content = memory,
-                defaultContent = memory,
+                content = buildMemoryPrompt(turn.memories, memoSchemeId, memoryOverride),
+                defaultContent = buildMemoryPrompt(turn.memories, memoSchemeId),
                 dynamic = true,
-            ).applyOverride()
+                hasOverride = memoryOverride != null,
+                parts = PromptSegments.MEMORY,
+                slotTexts = PromptComposer.mergedTexts(
+                    PromptSchemes.of(memoSchemeId).texts,
+                    memoryOverride?.slots.orEmpty(),
+                ),
+            )
         }
 
         // ③ 各工具自带的提示词
         turn.tools.forEach { tool ->
-            val prompt = tool.systemPrompt(turn.model, messages)
-            if (prompt.isNotBlank()) {
+            val id = SystemPromptBlockId.TOOL_PREFIX + tool.name
+            val blockOverride = overrideEntries[id]
+            val blockSkeleton = tool.systemPromptTemplate
+            val variables = tool.systemPromptVariables?.invoke()
+            // 带骨架的工具（技能清单这类）：按当前方案渲染槽位，数据块由工具提供
+            val rendered = when {
+                blockSkeleton != null && variables != null -> {
+                    val groups = listOf(PromptGroup("all", PromptSkeleton.parse(blockSkeleton)))
+                    PromptComposer.compose(
+                        groups = groups,
+                        activeGroupIds = setOf("all"),
+                        schemeTexts = PromptSchemes.of(turn.settings.promptSchemeId).texts,
+                        slotOverrides = blockOverride?.slots.orEmpty(),
+                        tokenValues = variables,
+                    )
+                }
+
+                blockOverride != null -> blockOverride.content
+                else -> tool.systemPrompt(turn.model, messages)
+            }
+            if (rendered.isNotBlank()) {
                 blocks += SystemPromptBlock(
-                    id = SystemPromptBlockId.TOOL_PREFIX + tool.name,
+                    id = id,
                     title = "工具：${tool.name}",
-                    content = prompt,
-                    defaultContent = prompt,
+                    content = rendered,
+                    defaultContent = rendered,
                     dynamic = true,
-                ).applyOverride()
+                    hasOverride = blockOverride != null,
+                    parts = blockSkeleton?.let { listOf(PromptGroup("all", PromptSkeleton.parse(it))) }
+                        .orEmpty(),
+                    slotTexts = blockSkeleton?.let {
+                        PromptComposer.mergedTexts(
+                            PromptSchemes.of(turn.settings.promptSchemeId).texts,
+                            blockOverride?.slots.orEmpty(),
+                        )
+                    }.orEmpty(),
+                )
             }
         }
 
@@ -295,42 +338,39 @@ class ChatRequestFactory(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
     ): List<SystemPromptBlock> {
-        val overrides = turn.settings.systemPromptOverrides
-            .filter { it.content.isNotBlank() }
-            .associate { it.blockId to it.content }
+        val overrideEntries = turn.settings.systemPromptOverrides
+            .filter { it.isMeaningful }
+            .associateBy { it.blockId }
         val blocks = buildSystemPromptBlocks(turn, messages).toMutableList()
 
         // ④ 工具的 description 与参数说明（走 tools 参数，不占系统提示词）
+        val toolSchemeTexts = PromptSchemes.of(turn.settings.promptSchemeId).texts
         turn.tools.forEach { tool ->
             val descId = toolDescriptionId(tool.name)
-            val descOverride = overrides[descId]
+            // 用户改写 > 方案文字 > 源码原文
+            val descOverride = overrideEntries[descId]?.content ?: toolSchemeTexts[descId]
             blocks += SystemPromptBlock(
                 id = descId,
                 title = "工具描述 · ${tool.name}",
                 content = descOverride ?: tool.description,
-                defaultContent = tool.description,
+                defaultContent = toolSchemeTexts[descId] ?: tool.description,
                 dynamic = true,
-                hasOverride = descOverride != null,
+                hasOverride = overrideEntries[descId] != null,
                 group = PromptSegmentGroup.TOOLS,
             )
 
-            val schema = runCatching { tool.parameters() }.getOrNull() as? InputSchema.Obj
-                ?: return@forEach
-            schema.properties.forEach { (paramName, value) ->
-                val default = (value as? JsonObject)
-                    ?.get("description")
-                    ?.jsonPrimitive
-                    ?.contentOrNull
-                    ?: return@forEach
-                val paramId = toolParamDescriptionId(tool.name, paramName)
-                val paramOverride = overrides[paramId]
+            // 递归列出全部参数说明：嵌套对象与数组元素也算，路径与覆盖表的键一致
+            val schema = runCatching { tool.parameters() }.getOrNull()
+            collectParamDescriptions(tool.name, schema).forEach { (paramId, path, default) ->
+                // 用户改写 > 方案文字 > 源码原文
+                val paramOverride = overrideEntries[paramId]?.content ?: toolSchemeTexts[paramId]
                 blocks += SystemPromptBlock(
                     id = paramId,
-                    title = "参数 · ${tool.name}.$paramName",
+                    title = "参数 · ${tool.name}.$path",
                     content = paramOverride ?: default,
-                    defaultContent = default,
+                    defaultContent = toolSchemeTexts[paramId] ?: default,
                     dynamic = true,
-                    hasOverride = paramOverride != null,
+                    hasOverride = overrideEntries[paramId] != null,
                     group = PromptSegmentGroup.TOOLS,
                 )
             }
@@ -365,14 +405,15 @@ class ChatRequestFactory(
                 ),
             ).forEach { (id, title, position) ->
                 val joined = byPosition[position]?.joinToString("\n") { it.content }.orEmpty()
-                if (joined.isNotBlank() || overrides[id] != null) {
+                val injectionOverride = overrideEntries[id]?.content
+                if (joined.isNotBlank() || injectionOverride != null) {
                     blocks += SystemPromptBlock(
                         id = id,
                         title = "注入 · $title",
-                        content = overrides[id] ?: joined,
+                        content = injectionOverride ?: joined,
                         defaultContent = joined,
                         dynamic = true,
-                        hasOverride = overrides[id] != null,
+                        hasOverride = injectionOverride != null,
                     )
                 }
             }
@@ -381,25 +422,40 @@ class ChatRequestFactory(
         // ⑥ 工作区提醒：追加到系统提示词末尾
         val workspaceId = turn.assistant.workspaceId?.toString()
         if (workspaceId != null) {
-            // 预览时按当前环境真实生成一次，失败就留空，不影响其它段
-            val preview = runCatching {
-                val workspace = workspaceRepository.getById(workspaceId) ?: return@runCatching ""
-                if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return@runCatching ""
-                buildWorkspaceReminderContent(
-                    repository = workspaceRepository,
-                    workspaceId = workspaceId,
-                    workspace = workspace,
-                    cwd = turn.workspaceCwd,
-                )
-            }.getOrDefault("")
-            if (preview.isNotBlank() || overrides[WORKSPACE_REMINDER_ID] != null) {
+            val workspaceOverride = overrideEntries[WORKSPACE_REMINDER_ID]
+            // 预览与实发走同一个渲染函数：骨架固定，环境值按当前状态填
+            val renderArgs = runCatching {
+                val workspace = workspaceRepository.getById(workspaceId) ?: return@runCatching null
+                if (workspace.shellStatus != WorkspaceShellStatus.READY.name) return@runCatching null
+                workspace
+            }.getOrNull()
+            if (renderArgs != null) {
+                val schemeId = turn.settings.promptSchemeId
                 blocks += SystemPromptBlock(
                     id = WORKSPACE_REMINDER_ID,
                     title = "工作区提醒",
-                    content = overrides[WORKSPACE_REMINDER_ID] ?: preview,
-                    defaultContent = preview,
+                    content = renderWorkspaceReminder(
+                        repository = workspaceRepository,
+                        workspaceId = workspaceId,
+                        workspace = renderArgs,
+                        cwd = turn.workspaceCwd,
+                        schemeId = schemeId,
+                        override = workspaceOverride,
+                    ),
+                    defaultContent = renderWorkspaceReminder(
+                        repository = workspaceRepository,
+                        workspaceId = workspaceId,
+                        workspace = renderArgs,
+                        cwd = turn.workspaceCwd,
+                        schemeId = schemeId,
+                    ),
                     dynamic = true,
-                    hasOverride = overrides[WORKSPACE_REMINDER_ID] != null,
+                    hasOverride = workspaceOverride != null,
+                    parts = PromptSegments.WORKSPACE,
+                    slotTexts = PromptComposer.mergedTexts(
+                        PromptSchemes.of(schemeId).texts,
+                        workspaceOverride?.slots.orEmpty(),
+                    ),
                 )
             }
         }
@@ -408,20 +464,35 @@ class ChatRequestFactory(
         if (turn.assistant.enableTimeReminder) {
             val firstUser = messages.firstOrNull { it.role == MessageRole.USER }
             if (firstUser != null) {
+                val timeOverride = overrideEntries[TIME_REMINDER_ID]
+                val schemeId = turn.settings.promptSchemeId
                 val preview = runCatching {
-                    val javaInstant = firstUser.createdAt.toInstant(TimeZone.currentSystemDefault()).toJavaInstant()
-                    val dayOfWeek = javaInstant.atZone(ZoneId.systemDefault()).dayOfWeek
-                        .getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault())
-                    "<time_reminder>Current time: $dayOfWeek, ${javaInstant.toLocalDateTime()}</time_reminder>"
+                    renderTimeReminder(
+                        gapSeconds = null,
+                        instant = firstUser.createdAt.toInstant(TimeZone.currentSystemDefault()),
+                        schemeId = schemeId,
+                        override = timeOverride,
+                    )
                 }.getOrDefault("")
-                if (preview.isNotBlank() || overrides[TIME_REMINDER_ID] != null) {
+                if (preview.isNotBlank()) {
                     blocks += SystemPromptBlock(
                         id = TIME_REMINDER_ID,
                         title = "时间提醒",
-                        content = overrides[TIME_REMINDER_ID] ?: preview,
-                        defaultContent = preview,
+                        content = preview,
+                        defaultContent = runCatching {
+                            renderTimeReminder(
+                                gapSeconds = null,
+                                instant = firstUser.createdAt.toInstant(TimeZone.currentSystemDefault()),
+                                schemeId = schemeId,
+                            )
+                        }.getOrDefault(""),
                         dynamic = true,
-                        hasOverride = overrides[TIME_REMINDER_ID] != null,
+                        hasOverride = timeOverride != null,
+                        parts = PromptSegments.TIME_REMINDER,
+                        slotTexts = PromptComposer.mergedTexts(
+                            PromptSchemes.of(schemeId).texts,
+                            timeOverride?.slots.orEmpty(),
+                        ),
                         group = PromptSegmentGroup.MESSAGES,
                     )
                 }

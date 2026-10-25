@@ -1,14 +1,18 @@
 package me.rerere.rikkahub.data.ai.transformers
 
-import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.ai.PromptComposer
+import me.rerere.rikkahub.data.ai.PromptSchemes
+import me.rerere.rikkahub.data.ai.PromptSegments
+import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.utils.toLocalDateTime
 import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlin.time.Instant
 import kotlin.time.toJavaInstant
 
 /** 时间提醒在覆盖表里的键 */
@@ -26,16 +30,21 @@ object TimeReminderTransformer : InputMessageTransformer {
     ): List<UIMessage> {
         if (!ctx.assistant.enableTimeReminder) return messages
         val override = ctx.settings.systemPromptOverrides
-            .firstOrNull { it.blockId == TIME_REMINDER_ID && it.content.isNotBlank() }
-            ?.content
-        return applyTimeReminder(messages, ctx.assistant.timeReminderIntervalMinutes, override)
+            .firstOrNull { it.blockId == TIME_REMINDER_ID }
+        return applyTimeReminder(
+            messages = messages,
+            intervalMinutes = ctx.assistant.timeReminderIntervalMinutes,
+            schemeId = ctx.settings.promptSchemeId,
+            override = override,
+        )
     }
 }
 
 internal fun applyTimeReminder(
     messages: List<UIMessage>,
     intervalMinutes: Int = 60,
-    overrideContent: String? = null,
+    schemeId: String = PromptSchemes.ENGLISH.id,
+    override: SystemPromptOverride? = null,
 ): List<UIMessage> {
     val thresholdSeconds = intervalMinutes.coerceAtLeast(1).toLong() * 60
     val result = mutableListOf<UIMessage>()
@@ -48,14 +57,14 @@ internal fun applyTimeReminder(
             val currInstant = current.createdAt.toInstant(tz)
             if (!firstUserFound) {
                 firstUserFound = true
-                result.add(buildTimeReminderMessage(null, currInstant, overrideContent))
+                result.add(buildTimeReminderMessage(null, currInstant, schemeId, override))
             } else {
                 val previous = messages[i - 1]
                 val prevInstant = previous.createdAt.toInstant(tz)
                 val gapSeconds = (currInstant - prevInstant).inWholeSeconds
 
                 if (gapSeconds > thresholdSeconds) {
-                    result.add(buildTimeReminderMessage(gapSeconds, currInstant, overrideContent))
+                    result.add(buildTimeReminderMessage(gapSeconds, currInstant, schemeId, override))
                 }
             }
         }
@@ -65,32 +74,48 @@ internal fun applyTimeReminder(
     return result
 }
 
+/**
+ * 时间提醒正文：骨架固定，`«»` 里的文字按方案取，`‹›` 里的数据按当前时间填。
+ *
+ * 数据块一律是英文形态（`Saturday`、`3 h`），两套方案完全相同——它们不是自然语言，不翻译。
+ */
+internal fun renderTimeReminder(
+    gapSeconds: Long?,
+    instant: Instant,
+    schemeId: String = PromptSchemes.ENGLISH.id,
+    override: SystemPromptOverride? = null,
+): String {
+    val javaInstant = instant.toJavaInstant()
+    val active = buildSet {
+        add("time")
+        add("tail")
+        if (gapSeconds != null) add("gap")
+    }
+    return PromptComposer.compose(
+        groups = PromptSegments.TIME_REMINDER,
+        activeGroupIds = active,
+        schemeTexts = PromptSchemes.of(schemeId).texts,
+        slotOverrides = override?.slots.orEmpty(),
+        tokenValues = mapOf(
+            "time" to javaInstant.toLocalDateTime(),
+            "weekday" to javaInstant.atZone(ZoneId.systemDefault()).dayOfWeek
+                .getDisplayName(TextStyle.FULL, Locale.ENGLISH),
+            "gap" to (gapSeconds?.let { formatDuration(it) } ?: ""),
+        ),
+    )
+}
+
+/** 时长按量级取单位；这是数据形态，不是自然语言，两套方案共用 */
+internal fun formatDuration(seconds: Long): String = when {
+    seconds < 3600 -> "${seconds / 60} min"
+    seconds < 86400 -> "${seconds / 3600} h"
+    else -> "${seconds / 86400} d"
+}
+
 private fun buildTimeReminderMessage(
     gapSeconds: Long?,
     instant: Instant,
-    overrideContent: String? = null,
-): UIMessage {
-    // 被改写后整段固定，不再随时间变化
-    if (overrideContent != null) {
-        return UIMessage.user(overrideContent).copy(isSynthetic = true)
-    }
-    val javaInstant = instant.toJavaInstant()
-    val dayOfWeek = javaInstant.atZone(ZoneId.systemDefault()).dayOfWeek
-        .getDisplayName(TextStyle.FULL, Locale.getDefault())
-    val timeStr = javaInstant.toLocalDateTime()
-    val content = if (gapSeconds != null) {
-        val gapText = formatGap(gapSeconds)
-        "<time_reminder>Current time: $dayOfWeek, $timeStr ($gapText since last message)</time_reminder>"
-    } else {
-        "<time_reminder>Current time: $dayOfWeek, $timeStr</time_reminder>"
-    }
-    return UIMessage.user(content).copy(isSynthetic = true)
-}
-
-private fun formatGap(seconds: Long): String {
-    return when {
-        seconds < 3600 -> "${seconds / 60} min"
-        seconds < 86400 -> "${seconds / 3600} h"
-        else -> "${seconds / 86400} d"
-    }
-}
+    schemeId: String,
+    override: SystemPromptOverride? = null,
+): UIMessage = UIMessage.user(renderTimeReminder(gapSeconds, instant, schemeId, override))
+    .copy(isSynthetic = true)

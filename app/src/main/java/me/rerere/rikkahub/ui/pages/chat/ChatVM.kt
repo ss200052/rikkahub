@@ -29,6 +29,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
 import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
@@ -341,10 +342,9 @@ class ChatVM(
     }
 
     /**
-     * content 为 null 或全空白时表示「恢复跟随」：移除改写，重新跟随助手/记忆等来源。
-     * 非空才写入改写，所以清空编辑框不会把这一块覆盖成空字符串。
+     * 纯文本文段的改写。content 为空表示「恢复跟随」：移除改写，重新跟随源头。
      */
-    fun saveSystemPromptOverride(blockId: String, content: String?) {
+    fun saveSystemPromptText(blockId: String, content: String?) {
         viewModelScope.launch {
             settingsStore.update { current ->
                 val others = current.systemPromptOverrides.filter { it.blockId != blockId }
@@ -352,10 +352,42 @@ class ChatVM(
                     systemPromptOverrides = if (content.isNullOrBlank()) {
                         others
                     } else {
-                        others + SystemPromptOverride(blockId, content)
+                        others + SystemPromptOverride(blockId, content = content)
                     },
                 )
             }
+            loadSystemPromptBlocks()
+        }
+    }
+
+    /**
+     * 分部件段的改写：保存的是每个文本框的文字。
+     *
+     * 与所选方案文字相同的槽位不写入——那样「跟随方案」才成立，
+     * 用户只保留自己真正改过的那几个框。
+     */
+    fun saveSystemPromptSlots(blockId: String, texts: Map<String, String>) {
+        viewModelScope.launch {
+            settingsStore.update { current ->
+                val scheme = PromptSchemes.of(current.promptSchemeId)
+                val changed = texts.filter { (slot, text) -> scheme.texts[slot] != text }
+                val others = current.systemPromptOverrides.filter { it.blockId != blockId }
+                current.copy(
+                    systemPromptOverrides = if (changed.isEmpty()) {
+                        others
+                    } else {
+                        others + SystemPromptOverride(blockId, slots = changed)
+                    },
+                )
+            }
+            loadSystemPromptBlocks()
+        }
+    }
+
+    /** 切换方案：只换文本框里的文字，骨架与数据块不变 */
+    fun selectPromptScheme(id: String) {
+        viewModelScope.launch {
+            settingsStore.update { it.copy(promptSchemeId = id) }
             loadSystemPromptBlocks()
         }
     }

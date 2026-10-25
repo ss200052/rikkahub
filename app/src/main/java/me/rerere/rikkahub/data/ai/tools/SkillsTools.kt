@@ -7,6 +7,8 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
+import me.rerere.rikkahub.data.ai.PromptSegments
 import me.rerere.rikkahub.data.skills.SkillFrontmatterParser
 import me.rerere.rikkahub.data.skills.SkillMetadata
 import me.rerere.rikkahub.data.skills.SkillPaths
@@ -21,6 +23,27 @@ fun createSkillTools(
     val available = allSkills.filter { it.name in enabledSkills }
     if (available.isEmpty()) return emptyList()
 
+    // 技能清单是运行期数据：收进 {{skills_block}}，说明文字保持可改写
+    val skillsVariables: () -> Map<String, String> = {
+        mapOf(
+            "skills_block" to buildString {
+                appendLine("<available_skills>")
+                available.forEach { skill ->
+                    appendLine("  <skill>")
+                    // 技能可能来自第三方导入，转义并限长，防止 name/description 闭合标签注入任意系统提示
+                    appendLine("    <name>${skill.name.escapeXml()}</name>")
+                    appendLine(
+                        "    <description>${skill.description.take(
+                            MAX_SKILL_DESCRIPTION_LENGTH
+                        ).escapeXml()}</description>"
+                    )
+                    appendLine("  </skill>")
+                }
+                append("</available_skills>")
+            },
+        )
+    }
+
     return listOf(
         Tool(
             name = "use_skill",
@@ -28,22 +51,9 @@ fun createSkillTools(
                 Load and apply a skill to get specialized instructions or capabilities.
                 Call this tool when the user's request matches one of the available skills.
             """.trimIndent(),
-            systemPrompt = { _, _ ->
-                buildString {
-                    appendLine("**Skills**")
-                    appendLine("You have access to the following skills. Use the `use_skill` tool to load a skill's instructions when the user's request matches.")
-                    appendLine("<available_skills>")
-                    available.forEach { skill ->
-                        appendLine("  <skill>")
-                        // 技能可能来自第三方导入，转义并限长，防止 name/description 闭合标签注入任意系统提示
-                        appendLine("    <name>${skill.name.escapeXml()}</name>")
-                        appendLine("    <description>${skill.description.take(MAX_SKILL_DESCRIPTION_LENGTH).escapeXml()}</description>")
-                        appendLine("  </skill>")
-                    }
-                    append("</available_skills>")
-                    appendLine()
-                }
-            },
+            systemPrompt = { _, _ -> "" },
+            systemPromptTemplate = PromptSegments.SKILLS_SKELETON,
+            systemPromptVariables = skillsVariables,
             parameters = {
                 InputSchema.Obj(
                     properties = buildJsonObject {
@@ -64,18 +74,24 @@ fun createSkillTools(
             },
             execute = {
                 val name = it.jsonObject["name"]?.jsonPrimitive?.content
-                    ?: error("name is required")
+                    ?: error(PromptRuntime.text("common.nameRequired"))
                 // 模型可能照抄系统提示中转义后的名称，两种形式都接受
                 val skill = available.firstOrNull { skill -> skill.name == name || skill.name.escapeXml() == name }
-                    ?: error("Skill '$name' is not available. Available skills: ${available.joinToString { it.name }}")
+                    ?: error(
+                        PromptRuntime.text(
+                            "skill.notAvailable",
+                            name,
+                            available.joinToString { it.name },
+                        ),
+                    )
                 val path = it.jsonObject["path"]?.jsonPrimitive?.content
                 val content = if (path.isNullOrBlank()) {
-                    require(skill.skillFile.exists()) { "Skill '$name' not found" }
+                    require(skill.skillFile.exists()) { PromptRuntime.text("skill.notFound", name) }
                     SkillFrontmatterParser.extractBody(skill.skillFile.readText())
                 } else {
                     val target = SkillPaths.resolveSkillFile(skill.skillDir, path)
-                        ?: error("Path '$path' is outside the skill directory")
-                    require(target.exists()) { "File '$path' not found in skill '$name'" }
+                        ?: error(PromptRuntime.text("skill.pathOutside", path))
+                    require(target.exists()) { PromptRuntime.text("skill.fileNotFound", path, name) }
                     target.readText()
                 }
                 listOf(UIMessagePart.Text(content))

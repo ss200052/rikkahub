@@ -13,6 +13,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.PromptRuntime
 
 private val CHART_STYLES = listOf("line", "bar", "scatter")
 private val AXIS_SCALES = listOf("linear", "log")
@@ -102,7 +103,7 @@ internal fun buildChartDisplayTool(): Tool = Tool(
         } else {
             buildJsonObject {
                 put("success", true)
-                put("message", "Chart displayed to the user.")
+                put("message", PromptRuntime.text("chart.displayed"))
             }
         }
         listOf(UIMessagePart.Text(payload.toString()))
@@ -119,21 +120,33 @@ private fun buildAxisSchema(): JsonObject = buildJsonObject {
         put("data", buildJsonObject {
             put("type", "array")
             put("items", buildJsonObject { put("type", "string") })
-            put("description", "Category labels (e.g. months) for line/bar charts, aligned with series values. " +
-                "Only allowed on x_axis, and not for scatter charts.")
+            put(
+                "description",
+                "Category labels (e.g. months) for line/bar charts, aligned with series values. " +
+                    "Only allowed on x_axis, and not for scatter charts."
+            )
         })
         put("min", buildJsonObject {
             put("type", "number")
-            put("description", "Lower bound of the display range. Allowed on y_axis for line charts and on both axes for scatter charts.")
+            put(
+                "description",
+                "Lower bound of the display range. Allowed on y_axis for line charts and on both axes for scatter charts."
+            )
         })
         put("max", buildJsonObject {
             put("type", "number")
-            put("description", "Upper bound of the display range. Allowed on y_axis for line charts and on both axes for scatter charts.")
+            put(
+                "description",
+                "Upper bound of the display range. Allowed on y_axis for line charts and on both axes for scatter charts."
+            )
         })
         put("scale", buildJsonObject {
             put("type", "string")
             put("enum", buildJsonArray { AXIS_SCALES.forEach { add(it) } })
-            put("description", "Scale type, default linear. Log is allowed on y_axis for all charts and on x_axis for scatter charts only.")
+            put(
+                "description",
+                "Scale type, default linear. Log is allowed on y_axis for all charts and on x_axis for scatter charts only."
+            )
         })
         put("format", buildJsonObject {
             put("type", "string")
@@ -153,57 +166,114 @@ private fun JsonObject.string(key: String): String? =
 
 private fun validateChartArgs(params: JsonObject): String? {
     val style = params.string("style")
-    if (style !in CHART_STYLES) return "style must be one of ${CHART_STYLES.joinToString()}"
+    if (style !in CHART_STYLES) {
+        return PromptRuntime.text("chart.styleInvalid", CHART_STYLES.joinToString())
+    }
 
     val axes = mutableMapOf<String, JsonObject>()
     for (axisName in listOf("x_axis", "y_axis")) {
         val element = params[axisName] ?: continue
-        val axis = element as? JsonObject ?: return "$axisName must be an object"
+        val axis = element as? JsonObject
+            ?: return PromptRuntime.text("chart.axisNotObject", axisName)
         validateAxis(axisName, axis, style!!)?.let { return it }
         axes[axisName] = axis
     }
 
     val series = params["series"] as? JsonArray
-    if (series.isNullOrEmpty()) return "series must be a non-empty array"
-    if (series.size > MAX_SERIES) return "series can contain at most $MAX_SERIES items"
+    if (series.isNullOrEmpty()) return PromptRuntime.text("chart.seriesEmpty")
+    if (series.size > MAX_SERIES) {
+        return PromptRuntime.text("chart.seriesTooMany", MAX_SERIES.toString())
+    }
 
     val xLabels = axes["x_axis"]?.get("data") as? JsonArray
     val xLog = axes["x_axis"]?.string("scale") == "log"
     val yLog = axes["y_axis"]?.string("scale") == "log"
 
     series.forEachIndexed { index, element ->
-        val item = element as? JsonObject ?: return "series[$index] must be an object"
+        val item = element as? JsonObject
+            ?: return PromptRuntime.text("chart.seriesNotObject", index.toString())
         val color = item["color"]
         if (color != null) {
             val colorText = (color as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
             if (colorText == null || !HEX_COLOR_REGEX.matches(colorText)) {
-                return "series[$index].color must be a hex color like '#F80' or '#FF8800'"
+                return PromptRuntime.text("chart.colorInvalid", index.toString())
             }
         }
 
         if (style == "scatter") {
-            if ("values" in item) return "series[$index] must not use 'values' for scatter charts; use 'points'"
-            val points = item["points"] as? JsonArray ?: return "series[$index].points is required for scatter charts"
-            if (points.size > MAX_SERIES_POINTS) return "series[$index].points can contain at most $MAX_SERIES_POINTS items"
+            if ("values" in item) {
+                return PromptRuntime.text("chart.scatterNoValues", index.toString())
+            }
+            val points = item["points"] as? JsonArray
+                ?: return PromptRuntime.text("chart.pointsRequired", index.toString())
+            if (points.size > MAX_SERIES_POINTS) {
+                return PromptRuntime.text(
+                    "chart.pointsTooMany",
+                    index.toString(),
+                    MAX_SERIES_POINTS.toString(),
+                )
+            }
             points.forEachIndexed { pointIndex, point ->
                 val obj = point as? JsonObject
                 val x = obj?.number("x")
                 val y = obj?.number("y")
-                if (x == null || y == null) return "series[$index].points[$pointIndex] must have numeric x and y"
-                if (xLog && x <= 0) return "series[$index].points[$pointIndex].x must be > 0 on a log x_axis"
-                if (yLog && y <= 0) return "series[$index].points[$pointIndex].y must be > 0 on a log y_axis"
+                if (x == null || y == null) {
+                    return PromptRuntime.text(
+                        "chart.pointsNumeric",
+                        index.toString(),
+                        pointIndex.toString(),
+                    )
+                }
+                if (xLog && x <= 0) {
+                    return PromptRuntime.text(
+                        "chart.pointXLog",
+                        index.toString(),
+                        pointIndex.toString(),
+                    )
+                }
+                if (yLog && y <= 0) {
+                    return PromptRuntime.text(
+                        "chart.pointYLog",
+                        index.toString(),
+                        pointIndex.toString(),
+                    )
+                }
             }
         } else {
-            if ("points" in item) return "series[$index] must not use 'points' for $style charts; use 'values'"
-            val values = item["values"] as? JsonArray ?: return "series[$index].values is required for $style charts"
-            if (values.size > MAX_SERIES_POINTS) return "series[$index].values can contain at most $MAX_SERIES_POINTS items"
+            if ("points" in item) {
+                return PromptRuntime.text("chart.lineNoPoints", index.toString(), style!!)
+            }
+            val values = item["values"] as? JsonArray
+                ?: return PromptRuntime.text("chart.valuesRequired", index.toString(), style!!)
+            if (values.size > MAX_SERIES_POINTS) {
+                return PromptRuntime.text(
+                    "chart.valuesTooMany",
+                    index.toString(),
+                    MAX_SERIES_POINTS.toString(),
+                )
+            }
             values.forEachIndexed { valueIndex, value ->
                 val number = (value as? JsonPrimitive)?.doubleOrNull
-                    ?: return "series[$index].values[$valueIndex] must be a number"
-                if (yLog && number <= 0) return "series[$index].values[$valueIndex] must be > 0 on a log y_axis"
+                    ?: return PromptRuntime.text(
+                        "chart.valueNumeric",
+                        index.toString(),
+                        valueIndex.toString(),
+                    )
+                if (yLog && number <= 0) {
+                    return PromptRuntime.text(
+                        "chart.valueYLog",
+                        index.toString(),
+                        valueIndex.toString(),
+                    )
+                }
             }
             if (xLabels != null && xLabels.size != values.size) {
-                return "series[$index].values has ${values.size} items but x_axis.data has ${xLabels.size}"
+                return PromptRuntime.text(
+                    "chart.labelCountMismatch",
+                    index.toString(),
+                    values.size.toString(),
+                    xLabels.size.toString(),
+                )
             }
         }
     }
@@ -215,38 +285,42 @@ private fun validateAxis(axisName: String, axis: JsonObject, style: String): Str
     val hasMax = "max" in axis
     // 折线图/柱状图的 X 轴是类目轴, 没有可映射的数值范围或对数刻度
     if (axisName == "x_axis" && style != "scatter" && (hasMin || hasMax || axis.string("scale") == "log")) {
-        return "x_axis.min/max and log scale are not supported for $style charts (the X axis is categorical); " +
-            "use y_axis for range and log scale"
+        return PromptRuntime.text("chart.xAxisCategorical", style)
     }
     if (style == "bar" && (hasMin || hasMax)) {
-        return "$axisName.min/max are not supported for bar charts (bars always start from 0)"
+        return PromptRuntime.text("chart.barNoMinMax", axisName)
     }
     val min = axis.number("min")
     val max = axis.number("max")
-    if (hasMin && min == null) return "$axisName.min must be a number"
-    if (hasMax && max == null) return "$axisName.max must be a number"
-    if (min != null && max != null && min >= max) return "$axisName.min must be less than $axisName.max"
+    if (hasMin && min == null) return PromptRuntime.text("chart.axisMinNotNumber", axisName)
+    if (hasMax && max == null) return PromptRuntime.text("chart.axisMaxNotNumber", axisName)
+    if (min != null && max != null && min >= max) {
+        return PromptRuntime.text("chart.axisOrder", axisName)
+    }
 
     val scale = axis["scale"]
     if (scale != null && axis.string("scale") !in AXIS_SCALES) {
-        return "$axisName.scale must be one of ${AXIS_SCALES.joinToString()}"
+        return PromptRuntime.text("chart.axisScaleInvalid", axisName, AXIS_SCALES.joinToString())
     }
     if (axis.string("scale") == "log" && min != null && min <= 0) {
-        return "$axisName.min must be > 0 on a log scale"
+        return PromptRuntime.text("chart.axisLogMin", axisName)
     }
 
     val data = axis["data"]
     // 标签只用于折线图/柱状图的类目 X 轴, 其余情况渲染时会被忽略
     if (data != null && (axisName == "y_axis" || style == "scatter")) {
         return if (axisName == "y_axis") {
-            "y_axis.data is not supported; category labels belong to x_axis.data"
+            PromptRuntime.text("chart.yAxisData")
         } else {
-            "x_axis.data is not supported for scatter charts (the X axis is numeric); use points[].x"
+            PromptRuntime.text("chart.scatterData")
         }
     }
     if (data != null) {
-        val labels = data as? JsonArray ?: return "$axisName.data must be an array of strings"
-        if (labels.any { (it as? JsonPrimitive)?.isString != true }) return "$axisName.data must be an array of strings"
+        val labels = data as? JsonArray
+            ?: return PromptRuntime.text("chart.axisDataNotArray", axisName)
+        if (labels.any { (it as? JsonPrimitive)?.isString != true }) {
+            return PromptRuntime.text("chart.axisDataNotArray", axisName)
+        }
     }
     return null
 }
