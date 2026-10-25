@@ -496,8 +496,12 @@ private fun ChatPageContent(
             var batchInspect by remember { mutableStateOf<Int?>(null) }
             var batchCommit by remember { mutableStateOf<Int?>(null) }
             val batchSession by vm.batchSession.collectAsStateWithLifecycle()
-            LaunchedEffect(batchSession != null) {
-                if (batchSession != null) showBatchPanel = true
+            LaunchedEffect(batchSession?.runId) {
+                val session = batchSession ?: return@LaunchedEffect
+                // 批次不属于当前对话就不打扰：切换会话时不该弹别人那批的面板
+                if (session.conversationId != id.toString()) return@LaunchedEffect
+                // 同一个批次只自动展开一次，用户收起后不再强弹
+                if (vm.consumeBatchAutoShow(session.runId)) showBatchPanel = true
             }
 
             ChatList(
@@ -517,7 +521,8 @@ private fun ChatPageContent(
                 },
                 onBatchRegenerate = { target ->
                     // 已有未处理的批量结果时直接打开工作台，不再弹一次配置窗
-                    if (batchSession != null) {
+                    val session = batchSession
+                    if (session != null && session.conversationId == id.toString()) {
                         showBatchPanel = true
                     } else {
                         batchTarget = target

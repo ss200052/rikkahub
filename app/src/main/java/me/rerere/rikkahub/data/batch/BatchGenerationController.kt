@@ -84,6 +84,9 @@ class BatchGenerationController(
     /** 批次编号自增源，用于区分新旧两批任务 */
     private var runSeq = 0L
 
+    /** 已经自动展开过工作台的批次编号：同一个批次不再重复弹 */
+    private var autoShownRunId: Long? = null
+
     /** 某一路命中落盘词时发出一次，供后台通知使用 */
     private val _laneHits = MutableSharedFlow<LaneHitEvent>(extraBufferCapacity = 32)
     val laneHits: SharedFlow<LaneHitEvent> = _laneHits.asSharedFlow()
@@ -179,6 +182,17 @@ class BatchGenerationController(
     /** 是否有需要重跑的失败路 */
     val hasFailedLanes: Boolean
         get() = _session.value?.lanes?.any { it is LaneState.Failed } == true
+
+    /**
+     * 这个批次要不要自动展开工作台。
+     *
+     * 每个批次只返回一次 true：用户收起之后，切换对话、重新进入都不该再被强行弹出来。
+     */
+    fun consumeAutoShow(runId: Long): Boolean {
+        if (autoShownRunId == runId) return false
+        autoShownRunId = runId
+        return true
+    }
 
     /**
      * 停止全部路。

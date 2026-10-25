@@ -704,6 +704,9 @@ class ChatService(
         return requestFactory.buildSystemPromptBlocks(turn, conversation.currentMessages)
     }
 
+    /** 这个批次是否需要自动展开工作台；每个批次只返回一次 true */
+    fun consumeBatchAutoShow(runId: Long): Boolean = batchController.consumeAutoShow(runId)
+
     /** 重跑某一路（失败、截断都能再来一次）；同样挂前台服务，切后台不会被系统回收 */
     fun rerunBatchLane(index: Int) {
         val session = batchController.session.value ?: return

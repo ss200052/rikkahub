@@ -308,6 +308,9 @@ class ChatVM(
 
     fun rerunBatchLane(index: Int) = chatService.rerunBatchLane(index)
 
+    /** 该批次是否还需要自动展开工作台（每批只返回一次 true） */
+    fun consumeBatchAutoShow(runId: Long): Boolean = chatService.consumeBatchAutoShow(runId)
+
     fun rerunBatchFailedLanes() = chatService.rerunBatchFailedLanes()
 
     /** 后台命中时是否推送通知 */
