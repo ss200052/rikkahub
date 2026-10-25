@@ -348,7 +348,8 @@ class RouteActivity : ComponentActivity() {
                                     text = key.text,
                                     files = key.files.map { it.toUri() },
                                     nodeId = key.nodeId?.let { Uuid.parse(it) },
-                                    messageId = key.messageId?.let { Uuid.parse(it) }
+                                    messageId = key.messageId?.let { Uuid.parse(it) },
+                                    autoSelectBranch = key.selectBranch
                                 )
                             }
 
@@ -639,7 +640,9 @@ sealed interface Screen : NavKey {
         val files: List<String> = emptyList(),
         val nodeId: String? = null,
         // 搜索结果命中到具体分支时带上，进入对话后自动切到那一条
-        val messageId: String? = null
+        val messageId: String? = null,
+        // true 直接切过去；false 只定位并给出切换提示
+        val selectBranch: Boolean = false
     ) : Screen
 
     @Serializable

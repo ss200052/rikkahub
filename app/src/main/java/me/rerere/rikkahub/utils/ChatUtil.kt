@@ -18,6 +18,8 @@ fun navigateToChatPage(
     nodeId: Uuid? = null,
     // 精确到分支：进入对话后自动切到这条候选
     messageId: Uuid? = null,
+    // true 时直接切到该候选；false 时只定位并提示，由用户决定要不要切
+    selectBranch: Boolean = false,
 ) {
     Log.i(TAG, "navigateToChatPage: navigate to $chatId")
     navigator.clearAndNavigate(
@@ -27,6 +29,7 @@ fun navigateToChatPage(
             files = initFiles.map { it.toString() },
             nodeId = nodeId?.toString(),
             messageId = messageId?.toString(),
+            selectBranch = selectBranch,
         )
     )
 }

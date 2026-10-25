@@ -17,6 +17,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.db.fts.MessageSearchResult
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
+import me.rerere.rikkahub.data.db.fts.SearchContentScope
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.ui.hooks.readStringPreference
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
@@ -33,8 +34,16 @@ private data class SearchRequest(
     val query: String,
     val sort: MessageSearchSort,
     val scope: MessageSearchScope,
+    val contentScope: SearchContentScope,
     val assistantId: Uuid?,
     val debounce: Boolean,
+)
+
+/** 点击某条结果后弹出的详情：完整思维链与正文，关键词高亮用 */
+data class SearchResultDetail(
+    val result: MessageSearchResult,
+    val reasoning: String,
+    val body: String,
 )
 
 class SearchVM(
@@ -48,6 +57,14 @@ class SearchVM(
     var searchQuery by mutableStateOf("")
         private set
     var searchScope by mutableStateOf(MessageSearchScope.CURRENT_ASSISTANT)
+        private set
+
+    /** 检索哪些内容：正文 / 思维链 / 两者 */
+    var contentScope by mutableStateOf(SearchContentScope.TEXT_AND_REASONING)
+        private set
+
+    /** 点击结果后加载出来的详情，非空时显示弹窗 */
+    var selectedDetail by mutableStateOf<SearchResultDetail?>(null)
         private set
     var sortOrder by mutableStateOf(
         runCatching {
@@ -101,6 +118,38 @@ class SearchVM(
         search()
     }
 
+    fun onContentScopeChange(scope: SearchContentScope) {
+        if (contentScope == scope) return
+        contentScope = scope
+        search()
+    }
+
+    /** 点开某条结果：读取完整内容用于就地展示，不跳转 */
+    fun openDetail(result: MessageSearchResult) {
+        viewModelScope.launch {
+            val conversation = conversationRepo.getConversationById(Uuid.parse(result.conversationId))
+                ?: return@launch
+            val message = conversation.messageNodes
+                .firstOrNull { it.id.toString() == result.nodeId }
+                ?.messages
+                ?.firstOrNull { it.id.toString() == result.messageId }
+                ?: return@launch
+            selectedDetail = SearchResultDetail(
+                result = result,
+                reasoning = message.parts
+                    .filterIsInstance<me.rerere.ai.ui.UIMessagePart.Reasoning>()
+                    .joinToString("\n\n") { it.reasoning },
+                body = message.parts
+                    .filterIsInstance<me.rerere.ai.ui.UIMessagePart.Text>()
+                    .joinToString("\n\n") { it.text },
+            )
+        }
+    }
+
+    fun dismissDetail() {
+        selectedDetail = null
+    }
+
     fun search() {
         requestSearch()
     }
@@ -115,6 +164,7 @@ class SearchVM(
                 query = searchQuery,
                 sort = sortOrder,
                 scope = searchScope,
+                contentScope = contentScope,
                 assistantId = assistantId,
                 debounce = debounce,
             )
@@ -145,7 +195,12 @@ class SearchVM(
         isLoading = true
         try {
             if (request.debounce) delay(300L)
-            results = conversationRepo.searchMessages(request.query, request.sort, request.assistantId)
+            results = conversationRepo.searchMessages(
+                keyword = request.query,
+                sort = request.sort,
+                assistantId = request.assistantId,
+                scope = request.contentScope,
+            )
         } finally {
             isLoading = false
         }

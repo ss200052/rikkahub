@@ -101,7 +101,14 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
 
 @Composable
-fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, messageId: Uuid? = null) {
+fun ChatPage(
+    id: Uuid,
+    text: String?,
+    files: List<Uri>,
+    nodeId: Uuid? = null,
+    messageId: Uuid? = null,
+    autoSelectBranch: Boolean = false,
+) {
     val vm: ChatVM = koinViewModel(
         parameters = {
             parametersOf(id.toString())
@@ -201,11 +208,17 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, me
                         val node = conversation.messageNodes[index]
                         val branchIndex = node.messages.indexOfFirst { it.id == messageId }
                         if (branchIndex >= 0 && branchIndex != node.selectIndex) {
-                            pendingBranchSwitch = PendingBranchSwitch(
-                                nodeId = node.id,
-                                index = branchIndex,
-                                total = node.messages.size,
-                            )
+                            if (autoSelectBranch) {
+                                // 用户明确选了「跳转到该候选项」，直接切过去
+                                vm.selectMessageNode(node.id, branchIndex)
+                            } else {
+                                // 只定位并提示，切不切由用户决定
+                                pendingBranchSwitch = PendingBranchSwitch(
+                                    nodeId = node.id,
+                                    index = branchIndex,
+                                    total = node.messages.size,
+                                )
+                            }
                         }
                     }
                     chatListState.scrollToItem(index)

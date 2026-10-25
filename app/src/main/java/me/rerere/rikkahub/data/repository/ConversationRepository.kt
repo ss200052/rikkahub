@@ -16,6 +16,7 @@ import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
+import me.rerere.rikkahub.data.db.fts.SearchContentScope
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
@@ -353,14 +354,16 @@ class ConversationRepository(
         keyword: String,
         sort: MessageSearchSort = MessageSearchSort.RELEVANCE,
         assistantId: Uuid? = null,
-    ) = messageFtsManager.search(keyword, sort, assistantId?.let { listOf(it.toString()) })
+        scope: SearchContentScope = SearchContentScope.TEXT_AND_REASONING,
+    ) = messageFtsManager.search(keyword, sort, assistantId?.let { listOf(it.toString()) }, scope)
 
     /** 只在 [assistantIds] 这些助手的对话里搜索 */
     suspend fun searchMessagesOfAssistants(keyword: String, assistantIds: Set<Uuid>) =
         messageFtsManager.search(keyword, MessageSearchSort.RELEVANCE, assistantIds.map { it.toString() })
 
     suspend fun rebuildAllIndexes(onProgress: (current: Int, total: Int) -> Unit = { _, _ -> }) {
-        messageFtsManager.deleteAll()
+        // 列结构可能变过（旧版是单列 text），整表重建最稳
+        messageFtsManager.recreateSchema()
         val allIds = conversationDAO.getAllIds()
         val total = allIds.size
         allIds.forEachIndexed { index, id ->

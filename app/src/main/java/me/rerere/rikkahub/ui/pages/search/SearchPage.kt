@@ -45,6 +45,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
@@ -54,6 +60,7 @@ import androidx.compose.ui.res.stringResource
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.db.fts.MessageSearchResult
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
+import me.rerere.rikkahub.data.db.fts.SearchContentScope
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -174,6 +181,33 @@ fun SearchPage(vm: SearchVM = koinViewModel()) {
                 }
             }
 
+            // 检索范围：正文 / 思维链 / 两者
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 8.dp),
+            ) {
+                SearchContentScope.entries.forEachIndexed { index, scope ->
+                    SegmentedButton(
+                        selected = vm.contentScope == scope,
+                        onClick = { vm.onContentScopeChange(scope) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = SearchContentScope.entries.size,
+                        ),
+                    ) {
+                        Text(
+                            when (scope) {
+                                SearchContentScope.TEXT_ONLY -> "正文"
+                                SearchContentScope.REASONING_ONLY -> "思维链"
+                                SearchContentScope.TEXT_AND_REASONING -> "全部"
+                            }
+                        )
+                    }
+                }
+            }
+
             Box(modifier = Modifier.weight(1f)) {
                 if (vm.isLoading || vm.isRebuilding) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -233,12 +267,8 @@ fun SearchPage(vm: SearchVM = koinViewModel()) {
                                 SearchResultItem(
                                     result = result,
                                     onClick = {
-                                        navigateToChatPage(
-                                            navController,
-                                            chatId = Uuid.parse(result.conversationId),
-                                            nodeId = Uuid.parse(result.nodeId),
-                                            messageId = Uuid.parse(result.messageId),
-                                        )
+                                        // 先就地打开详情，不直接跳转
+                                        vm.openDetail(result)
                                     }
                                 )
                             }
@@ -246,6 +276,129 @@ fun SearchPage(vm: SearchVM = koinViewModel()) {
                     }
                 }
             }
+        }
+    }
+
+    // 点击结果先就地展示完整内容，再决定跳到哪儿
+    vm.selectedDetail?.let { detail ->
+        SearchResultDetailDialog(
+            detail = detail,
+            keyword = vm.searchQuery,
+            onDismiss = { vm.dismissDetail() },
+            onJumpToConversation = {
+                vm.dismissDetail()
+                navigateToChatPage(
+                    navController,
+                    chatId = Uuid.parse(detail.result.conversationId),
+                    nodeId = Uuid.parse(detail.result.nodeId),
+                    messageId = Uuid.parse(detail.result.messageId),
+                    // 只定位到消息并给出切换提示，不擅自改变当前分支
+                    selectBranch = false,
+                )
+            },
+            onJumpToBranch = {
+                vm.dismissDetail()
+                navigateToChatPage(
+                    navController,
+                    chatId = Uuid.parse(detail.result.conversationId),
+                    nodeId = Uuid.parse(detail.result.nodeId),
+                    messageId = Uuid.parse(detail.result.messageId),
+                    selectBranch = true,
+                )
+            },
+        )
+    }
+}
+
+/** 搜索结果详情：完整思维链 + 正文，关键词高亮 */
+@Composable
+private fun SearchResultDetailDialog(
+    detail: SearchResultDetail,
+    keyword: String,
+    onDismiss: () -> Unit,
+    onJumpToConversation: () -> Unit,
+    onJumpToBranch: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = detail.result.title.ifBlank { "未命名对话" },
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = detail.result.updateAt.atZone(ZoneId.systemDefault())
+                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (detail.reasoning.isNotBlank()) {
+                    Text("思维链", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = highlightKeyword(
+                            text = detail.reasoning,
+                            keyword = keyword,
+                            background = MaterialTheme.colorScheme.tertiaryContainer,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (detail.body.isNotBlank()) {
+                    Text("正文", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = highlightKeyword(
+                            text = detail.body,
+                            keyword = keyword,
+                            background = MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (detail.reasoning.isBlank() && detail.body.isBlank()) {
+                    Text("这条消息没有可显示的文本内容", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onJumpToBranch) { Text("跳转到该候选") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onJumpToConversation) { Text("跳到对话") }
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        },
+    )
+}
+
+/** 把关键词标出来，大小写不敏感 */
+private fun highlightKeyword(text: String, keyword: String, background: Color): AnnotatedString {
+    if (keyword.isBlank() || text.isEmpty()) return AnnotatedString(text)
+    return buildAnnotatedString {
+        var cursor = 0
+        while (cursor <= text.length) {
+            val hit = text.indexOf(keyword, cursor, ignoreCase = true)
+            if (hit < 0) {
+                append(text.substring(cursor))
+                break
+            }
+            append(text.substring(cursor, hit))
+            withStyle(SpanStyle(background = background)) {
+                append(text.substring(hit, hit + keyword.length))
+            }
+            cursor = hit + keyword.length
         }
     }
 }
