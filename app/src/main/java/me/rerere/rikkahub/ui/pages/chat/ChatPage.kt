@@ -574,11 +574,13 @@ private fun ChatPageContent(
             batchTarget?.let { target ->
                 BatchRegenerateDialog(
                     initial = vm.lastBatchConfig,
+                    presets = setting.batchKeywordPresets,
                     onDismiss = { batchTarget = null },
                     onStart = { config ->
                         batchTarget = null
                         vm.startBatchRegenerate(target, config)
                     },
+                    onPresetsChange = { vm.saveBatchKeywordPresets(it) },
                 )
             }
 

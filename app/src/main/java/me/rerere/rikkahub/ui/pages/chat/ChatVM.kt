@@ -34,6 +34,7 @@ import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
 import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
+import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.BatchSession
 import me.rerere.rikkahub.data.batch.CommitTarget
@@ -303,6 +304,17 @@ class ChatVM(
             settingsStore.update { it.copy(batchRegeneration = config) }
         }
         chatService.startBatchRegenerate(_conversationId, message.id, config)
+    }
+
+    /** 弹窗里的关键词库：调用方已经算好新列表，这里去空去重后整份存下 */
+    fun saveBatchKeywordPresets(presets: List<BatchKeywordPreset>) {
+        viewModelScope.launch {
+            val cleaned = presets
+                .map { it.copy(group = it.group.trim(), keyword = it.keyword.trim()) }
+                .filter { it.keyword.isNotEmpty() }
+                .distinctBy { Triple(it.category, it.group, it.keyword) }
+            settingsStore.update { it.copy(batchKeywordPresets = cleaned) }
+        }
     }
 
     fun stopBatchLane(index: Int) = chatService.stopBatchLane(index)

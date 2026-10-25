@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.message
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -8,11 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -29,6 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import me.rerere.ai.core.ReasoningLevel
+import me.rerere.rikkahub.data.batch.BatchKeywordCategory
+import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.KeywordScope
 import kotlin.math.roundToInt
@@ -40,25 +45,42 @@ private enum class CommitScopeOption(val scope: KeywordScope, val label: String)
     BOTH(KeywordScope.TEXT_AND_REASONING, "正文+思考"),
 }
 
+/** 思考深度在弹窗里的显示名 */
+private fun reasoningLabel(level: ReasoningLevel): String = when (level) {
+    ReasoningLevel.OFF -> "关闭"
+    ReasoningLevel.AUTO -> "自动"
+    ReasoningLevel.LOW -> "低"
+    ReasoningLevel.MEDIUM -> "中"
+    ReasoningLevel.HIGH -> "高"
+    ReasoningLevel.XHIGH -> "更高"
+    ReasoningLevel.MAX -> "最高"
+}
+
 /**
  * 批量重新生成的参数弹窗。
  *
  * 关键词分三组独立配置：落盘标记词、思考内容重 roll 词、正文重 roll 词。
- * 点击已有关键词可以删除，输入后点「添加」加入。
+ * 每组下面挂着一份关键词库：库按自定义 tab 分组，点一下就把词加进当前这组，
+ * 当前这组的关键词也可以反向存进库里。
  */
 @Composable
 fun BatchRegenerateDialog(
     initial: BatchRegenerationConfig,
+    presets: List<BatchKeywordPreset>,
     onDismiss: () -> Unit,
     onStart: (BatchRegenerationConfig) -> Unit,
+    onPresetsChange: (List<BatchKeywordPreset>) -> Unit,
 ) {
-    var parallel by remember { mutableIntStateOf(initial.parallelCount.coerceIn(1, BatchRegenerationConfig.MAX_PARALLEL)) }
+    var parallel by remember {
+        mutableIntStateOf(initial.parallelCount.coerceIn(1, BatchRegenerationConfig.MAX_PARALLEL))
+    }
     var commitKeywords by remember { mutableStateOf(initial.commitKeywords) }
     var reasoningKeywords by remember { mutableStateOf(initial.rerollReasoningKeywords) }
     var textKeywords by remember { mutableStateOf(initial.rerollTextKeywords) }
     var rerollLimit by remember { mutableStateOf(initial.maxRerollsPerLane) }
     var rerollOnNoHit by remember { mutableStateOf(initial.rerollOnNoHit) }
     var commitScope by remember { mutableStateOf(initial.commitScope) }
+    var reasoningOverride by remember { mutableStateOf(initial.reasoningLevelOverride) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -67,7 +89,7 @@ fun BatchRegenerateDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 460.dp)
+                    .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -87,11 +109,40 @@ fun BatchRegenerateDialog(
 
                 HorizontalDivider()
 
+                // ---- 思考深度 ----
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text = "思考深度", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "只对这一批生效，不改动会话本身的设置；跟随会话表示用当前对话的深度",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = reasoningOverride == null,
+                            onClick = { reasoningOverride = null },
+                            label = { Text("跟随会话") },
+                        )
+                        ReasoningLevel.entries.forEach { level ->
+                            FilterChip(
+                                selected = reasoningOverride == level,
+                                onClick = { reasoningOverride = level },
+                                label = { Text(reasoningLabel(level)) },
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+
                 KeywordEditor(
                     title = "落盘标记词",
                     hint = "回复中出现这些词就标记为「像样」，不会自动落盘；留空表示不标记",
+                    category = BatchKeywordCategory.COMMIT,
                     keywords = commitKeywords,
                     onChange = { commitKeywords = it },
+                    presets = presets,
+                    onPresetsChange = onPresetsChange,
                 )
 
                 // 匹配范围：默认只看正文，避免思考里提到一次就被标记
@@ -114,15 +165,21 @@ fun BatchRegenerateDialog(
                 KeywordEditor(
                     title = "重 roll · 仅思考内容",
                     hint = "思考内容一出现这些词就截断重来；留空表示不按思考重 roll",
+                    category = BatchKeywordCategory.REASONING,
                     keywords = reasoningKeywords,
                     onChange = { reasoningKeywords = it },
+                    presets = presets,
+                    onPresetsChange = onPresetsChange,
                 )
 
                 KeywordEditor(
                     title = "重 roll · 仅正文",
                     hint = "正文一出现这些词就截断重来；留空表示不按正文重 roll",
+                    category = BatchKeywordCategory.TEXT,
                     keywords = textKeywords,
                     onChange = { textKeywords = it },
+                    presets = presets,
+                    onPresetsChange = onPresetsChange,
                 )
 
                 HorizontalDivider()
@@ -176,6 +233,7 @@ fun BatchRegenerateDialog(
                             maxRerollsPerLane = rerollLimit,
                             rerollOnNoHit = rerollOnNoHit,
                             commitScope = commitScope,
+                            reasoningLevelOverride = reasoningOverride,
                         ),
                     )
                 },
@@ -187,15 +245,50 @@ fun BatchRegenerateDialog(
     )
 }
 
-/** 关键词编辑区：点标签删除，输入后点「添加」新增 */
+/**
+ * 一组关键词的编辑区，下面挂着属于这一类别的关键词库。
+ *
+ * 库的 tab 是用户自己起的分组名；点库里的词就加进上面这组，
+ * 也可以把上面这组现有的词存进库里（存进当前 tab，或存成一个新分组）。
+ */
 @Composable
 private fun KeywordEditor(
     title: String,
     hint: String,
+    category: BatchKeywordCategory,
     keywords: List<String>,
     onChange: (List<String>) -> Unit,
+    presets: List<BatchKeywordPreset>,
+    onPresetsChange: (List<BatchKeywordPreset>) -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
+    var newGroupName by remember { mutableStateOf("") }
+    var showNewGroup by remember { mutableStateOf(false) }
+
+    val groups = remember(presets, category) {
+        presets.filter { it.category == category }.map { it.group }.distinct()
+    }
+    var selectedGroup by remember(category) { mutableStateOf(groups.firstOrNull().orEmpty()) }
+    // 分组可能被删空，选中的 tab 要跟着回退
+    val activeGroup = if (selectedGroup in groups) selectedGroup else groups.firstOrNull().orEmpty()
+    val groupKeywords = presets
+        .filter { it.category == category && it.group == activeGroup }
+        .map { it.keyword }
+
+    fun addKeyword(value: String) {
+        val text = value.trim()
+        if (text.isNotEmpty()) onChange((keywords + text).distinct())
+    }
+
+    fun storeInto(group: String) {
+        if (keywords.isEmpty()) return
+        val existing = presets.map { Triple(it.category, it.group, it.keyword) }.toSet()
+        val additions = keywords
+            .filter { Triple(category, group, it) !in existing }
+            .map { BatchKeywordPreset(category = category, group = group, keyword = it) }
+        if (additions.isNotEmpty()) onPresetsChange(presets + additions)
+        selectedGroup = group
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(text = title, style = MaterialTheme.typography.titleSmall)
@@ -230,13 +323,102 @@ private fun KeywordEditor(
             TextButton(
                 enabled = draft.isNotBlank(),
                 onClick = {
-                    val value = draft.trim()
-                    if (value.isNotEmpty()) {
-                        onChange((keywords + value).distinct())
-                        draft = ""
-                    }
+                    addKeyword(draft)
+                    draft = ""
                 },
             ) { Text("添加") }
+        }
+
+        // ---- 关键词库：分类内的自定义 tab ----
+        if (groups.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                groups.forEach { group ->
+                    FilterChip(
+                        selected = group == activeGroup,
+                        onClick = { selectedGroup = group },
+                        label = {
+                            Text(group.ifBlank { BatchKeywordPreset.DEFAULT_GROUP_LABEL })
+                        },
+                    )
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                groupKeywords.forEach { keyword ->
+                    InputChip(
+                        selected = false,
+                        onClick = { addKeyword(keyword) },
+                        label = { Text(keyword) },
+                        trailingIcon = {
+                            Text(
+                                text = "×",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clickable {
+                                        onPresetsChange(
+                                            presets.filterNot {
+                                                it.category == category &&
+                                                    it.group == activeGroup &&
+                                                    it.keyword == keyword
+                                            },
+                                        )
+                                    }
+                                    .padding(start = 2.dp, end = 4.dp),
+                            )
+                        },
+                    )
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(
+                enabled = keywords.isNotEmpty(),
+                onClick = { storeInto(activeGroup) },
+            ) {
+                Text(
+                    text = if (groups.isEmpty()) "存进库" else "存进当前分组",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            TextButton(
+                enabled = keywords.isNotEmpty(),
+                onClick = { showNewGroup = !showNewGroup },
+            ) { Text("存为新分组", style = MaterialTheme.typography.labelMedium) }
+            if (groupKeywords.isNotEmpty()) {
+                TextButton(
+                    onClick = {
+                        onPresetsChange(
+                            presets.filterNot {
+                                it.category == category && it.group == activeGroup
+                            },
+                        )
+                    },
+                ) { Text("删掉本组", style = MaterialTheme.typography.labelMedium) }
+            }
+        }
+
+        if (showNewGroup) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = newGroupName,
+                    onValueChange = { newGroupName = it },
+                    singleLine = true,
+                    label = { Text("新分组名") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 4.dp),
+                )
+                TextButton(
+                    enabled = newGroupName.isNotBlank() && keywords.isNotEmpty(),
+                    onClick = {
+                        val name = newGroupName.trim()
+                        storeInto(name)
+                        newGroupName = ""
+                        showNewGroup = false
+                    },
+                ) { Text("确定") }
+            }
         }
     }
 }

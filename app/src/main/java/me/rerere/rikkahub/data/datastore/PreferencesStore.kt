@@ -185,6 +185,7 @@ class SettingsStore internal constructor(
 
         // 批量重新生成
         val BATCH_REGENERATION = stringPreferencesKey("batch_regeneration")
+        val BATCH_KEYWORD_PRESETS = stringPreferencesKey("batch_keyword_presets")
         val NOTIFY_BATCH_HIT_IN_BACKGROUND = booleanPreferencesKey("notify_batch_hit_in_background")
 
         // 全文索引结构版本

@@ -11,6 +11,8 @@ import me.rerere.mediagen.provider.MediaGenerationProviderSetting
 import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
+import me.rerere.rikkahub.data.batch.BatchKeywordCategory
+import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Lorebook
@@ -174,6 +176,9 @@ private val SAMPLE = Settings(
     systemPromptOverrides = listOf(SystemPromptOverride(blockId = "base", content = "override")),
     systemPromptPresets = listOf(SystemPromptPreset(id = "preset", name = "Preset")),
     promptSchemeId = "zh",
+    batchKeywordPresets = listOf(
+        BatchKeywordPreset(BatchKeywordCategory.COMMIT, "语气", "嗯"),
+    ),
 )
 
 private val STORED_KEYS = setOf(
@@ -233,4 +238,5 @@ private val STORED_KEYS = setOf(
     "system_prompt_overrides",
     "system_prompt_presets",
     "prompt_scheme_id",
+    "batch_keyword_presets",
 )

@@ -115,9 +115,19 @@ class ChatRequestFactory(
     )
 
     /** 解析本轮的助手、模型、记忆和工具；MCP 服务名不合法时抛出 InvalidMcpServerNamesException */
-    suspend fun createContext(settings: Settings, conversation: Conversation): ChatTurnContext {
+    suspend fun createContext(
+        settings: Settings,
+        conversation: Conversation,
+        /**
+         * 临时覆盖思考深度，只对这一份上下文生效，不改动会话本身。
+         * 批量生成用它让整批统一用某个深度跑。
+         */
+        reasoningLevelOverride: ReasoningLevel? = null,
+    ): ChatTurnContext {
         // 模型、思考级别、搜索、工具等以会话上固定的配置为准
-        val assistant = settings.getAssistantOf(conversation)
+        val assistant = settings.getAssistantOf(conversation).let { base ->
+            if (reasoningLevelOverride == null) base else base.copy(reasoningLevel = reasoningLevelOverride)
+        }
         val model = settings.getChatModelOf(conversation)
             ?: throw IllegalStateException("No chat model selected")
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")

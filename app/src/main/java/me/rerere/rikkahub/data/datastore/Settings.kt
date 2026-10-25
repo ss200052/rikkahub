@@ -14,6 +14,7 @@ import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TITLE_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TRANSLATION_PROMPT
+import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
@@ -88,6 +89,8 @@ data class Settings(
     val sponsorAlertDismissedAt: Int = 0,
     // 批量重新生成上次使用的参数
     val batchRegeneration: BatchRegenerationConfig = BatchRegenerationConfig(),
+    // 批量弹窗的关键词库：按分类与自定义 tab 分组存放，点一下加进当前关键词
+    val batchKeywordPresets: List<BatchKeywordPreset> = emptyList(),
     // 已建好的全文索引结构版本；低于当前版本时启动会自动重建一次
     val ftsSchemaVersion: Int = 0,
     // 批量重新生成在后台跑到命中时是否发通知

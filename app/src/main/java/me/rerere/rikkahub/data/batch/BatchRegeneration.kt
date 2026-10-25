@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.data.batch
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 
@@ -10,6 +12,46 @@ enum class KeywordScope {
     TEXT_ONLY,
     REASONING_ONLY,
     TEXT_AND_REASONING,
+}
+
+/** 关键词库的分类，与批量弹窗里的三组关键词一一对应 */
+@Serializable
+enum class BatchKeywordCategory {
+    /** 落盘标记词 */
+    @SerialName("commit")
+    COMMIT,
+
+    /** 重 roll · 仅思考内容 */
+    @SerialName("reasoning")
+    REASONING,
+
+    /** 重 roll · 仅正文 */
+    @SerialName("text")
+    TEXT,
+
+    /** 重 roll · 正文或思考都算 */
+    @SerialName("any")
+    ANY,
+}
+
+/**
+ * 一条存进关键词库的词。
+ *
+ * [group] 是用户自己起的 tab 名（例如「语气词」「废话」），空串归到默认分组。
+ * 分类决定它出现在哪一组关键词下面，分组决定它出现在那一组的哪个 tab 里。
+ */
+@Serializable
+data class BatchKeywordPreset(
+    val category: BatchKeywordCategory,
+    val group: String = "",
+    val keyword: String,
+) {
+    /** tab 上显示的名字：空分组叫「默认」 */
+    val groupLabel: String get() = group.ifBlank { DEFAULT_GROUP_LABEL }
+
+    companion object {
+        const val DEFAULT_GROUP_LABEL = "默认"
+    }
 }
 
 /** 命中来源：思考内容还是正文 */
@@ -62,6 +104,13 @@ data class BatchRegenerationConfig(
     val maxRerollsPerLane: Int = 5,
     /** 打开后即使本轮没命中重 roll 词也继续重来，直到跑满轮次 */
     val rerollOnNoHit: Boolean = false,
+    /**
+     * 这一批统一使用的思考深度。
+     *
+     * 为空表示跟随会话当前设置；填了就在这里临时覆盖，不改动会话本身，
+     * 用来在不动全局配置的前提下对比「同一批换一个思考深度」的结果。
+     */
+    val reasoningLevelOverride: ReasoningLevel? = null,
 ) {
     /** 有任意一组重 roll 词需要实时检测 */
     val hasRerollKeywords: Boolean

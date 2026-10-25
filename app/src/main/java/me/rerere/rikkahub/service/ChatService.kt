@@ -675,7 +675,8 @@ class ChatService(
 
                 val settings = settingsStore.awaitLoaded()
                 // 请求上下文只组装一次，N 路共用同一份快照，结果才可比
-                val turn = requestFactory.createContext(settings, conversation)
+                // 弹窗里选了思考深度就在这里临时覆盖，不改动会话本身的设置
+                val turn = requestFactory.createContext(settings, conversation, config.reasoningLevelOverride)
                 // 必须包含目标用户消息本身；漏掉它请求体里就只剩系统提示词和更早的历史
                 val history = conversation.currentMessages.take(targetIndex + 1)
 
