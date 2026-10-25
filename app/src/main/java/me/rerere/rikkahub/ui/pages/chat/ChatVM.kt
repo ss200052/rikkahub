@@ -28,6 +28,7 @@ import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.isEmptyInputMessage
+import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
@@ -213,7 +214,8 @@ class ChatVM(
     // Update checker
     val updateState = settingsStore.settingsFlow
         .map { settings ->
-            !settings.init &&
+            !BuildConfig.IS_PLAY_STORE &&
+                !settings.init &&
                 settings.displaySetting.updateCheckDisabledUntilEpochMillis <= System.currentTimeMillis()
         }
         .distinctUntilChanged()

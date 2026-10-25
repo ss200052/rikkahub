@@ -29,6 +29,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.AppDatabaseFactory
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
+import me.rerere.rikkahub.data.remote.ModelsDevUpdater
 import me.rerere.rikkahub.data.remote.RemoteFileStore
 import me.rerere.rikkahub.data.remote.RikkaHubAPI
 import me.rerere.rikkahub.data.remote.SettingsProxyAuthenticator
@@ -40,8 +41,8 @@ import me.rerere.rikkahub.data.sync.S3Sync
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.service.memoryDreamKeepAlive
 import me.rerere.search.SearchService
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Dispatcher
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.dsl.module
@@ -248,6 +249,10 @@ val dataSourceModule = module {
 
     single {
         SponsorAPI.create(get())
+    }
+
+    single {
+        ModelsDevUpdater(context = get(), client = get())
     }
 
     single {

@@ -49,7 +49,8 @@ class ChatInputState {
         textContent.setTextAndPlaceCursorAtEnd(text)
         val reasoning = contents.editableReasoningOrNull()
         editingReasoning = reasoning?.let { TextFieldState(it.reasoning) }
-        messageContent = contents.filter { it !is UIMessagePart.Text && (reasoning == null || it !is UIMessagePart.Reasoning) }
+        messageContent =
+            contents.filter { it !is UIMessagePart.Text && (reasoning == null || it !is UIMessagePart.Reasoning) }
         editingParts = contents
         editingAttachmentUrls = contents.mapNotNull { it.attachmentUrlOrNull() }.toSet()
     }

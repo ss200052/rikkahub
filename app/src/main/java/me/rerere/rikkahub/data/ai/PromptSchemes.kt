@@ -76,6 +76,52 @@ object PromptSchemes {
             "skills.intro.lead" to "You have access to the following skills. Use the ",
             "skills.intro.tail" to " tool to load a skill's instructions when the user's request matches.",
 
+            // 远程（SSH）工作区
+            "workspace.ssh.intro.lead" to "You have access to a persistent remote workspace named \"",
+            "workspace.ssh.intro.middle" to "\" on a real machine, reached over SSH as ",
+            "workspace.ssh.intro.tail" to ".",
+            "workspace.ssh.dir.lead" to "The workspace directory is ",
+            "workspace.ssh.dir.tail" to
+                ". Use it as your working directory; files written there persist across turns of this conversation.",
+            "workspace.ssh.paths.lead" to
+                "All paths passed to workspace tools must be absolute paths on the remote machine (for example ",
+            "workspace.ssh.paths.tail" to ").",
+            "workspace.ssh.notSandbox" to
+                "This is not a sandbox: commands run with the SSH user's real permissions and can affect " +
+                "other data and services on the machine. Avoid destructive or system-wide changes unless " +
+                "the user asks for them.",
+            "workspace.ssh.distro.lead" to "The remote operating system is ",
+            "workspace.ssh.distro.tail" to ".",
+            "workspace.ssh.shell.lead" to " runs commands with ",
+            "workspace.ssh.shell.tail" to ".",
+            "workspace.ssh.shell.posix.middle" to
+                ", a POSIX shell. Bash is not installed, so avoid bash-only syntax such as arrays, " +
+                "here-strings (",
+            "workspace.ssh.shell.posix.tail" to ") and brace expansion.",
+            "workspace.ssh.tools.lead" to "Available tools:",
+            "workspace.ssh.read.tail" to ": read file contents.",
+            "workspace.ssh.tool.shell.tail" to
+                ": run shell commands on the remote machine (defaults to the workspace directory).",
+            "workspace.ssh.noWriteTools" to
+                "There are no file write or edit tools in this workspace. Create and modify files with " +
+                "`workspace_shell`, for example a quoted heredoc (`cat > file <<'EOF'`) for new content, " +
+                "or `sed`, `patch` or a short script for targeted edits. Prefer targeted edits over " +
+                "rewriting whole files.",
+            "workspace.ssh.cwd.lead" to "Current working directory: ",
+            "workspace.ssh.cwd.tail" to
+                ". Use this as the default context for file operations and shell commands.",
+
+            // 远程工作区连不上
+            "unreachable.intro.lead" to "You are bound to a workspace named \"",
+            "unreachable.intro.tail" to "\"",
+            "unreachable.address.lead" to " on ",
+            "unreachable.address.tail" to "",
+            "unreachable.dir.lead" to " with directory ",
+            "unreachable.reason.lead" to ", but it is currently unreachable: ",
+            "unreachable.hint" to
+                "Workspace tools will fail until the connection is restored. If the user asks you to " +
+                "work in the workspace, tell them it is unreachable.",
+
             // 记忆段：引导与规则
             "memory.intro" to
                 "You have a memory store that persists across conversations, made up of Markdown files. " +
@@ -326,6 +372,47 @@ object PromptSchemes {
             "skills.title" to "技能",
             "skills.intro.lead" to "你可以使用下列技能。当用户的请求与某个技能匹配时,用 ",
             "skills.intro.tail" to " 工具加载该技能的说明。",
+
+            // 远程（SSH）工作区
+            "workspace.ssh.intro.lead" to "你可以使用一个名为 \"",
+            "workspace.ssh.intro.middle" to "\" 的远程工作区,它运行在一台真实机器上,通过 SSH 以 ",
+            "workspace.ssh.intro.tail" to " 身份连接。",
+            "workspace.ssh.dir.lead" to "工作区目录是 ",
+            "workspace.ssh.dir.tail" to
+                "。请把它当作工作目录;写在那里的文件会在本对话的后续轮次中保留。",
+            "workspace.ssh.paths.lead" to
+                "传给工作区工具的所有路径都必须是远端机器上的绝对路径(例如 ",
+            "workspace.ssh.paths.tail" to ")。",
+            "workspace.ssh.notSandbox" to
+                "这不是沙箱:命令以 SSH 用户的真实权限执行,可能影响机器上的其他数据与服务。" +
+                "除非用户明确要求,避免破坏性或系统范围的改动。",
+            "workspace.ssh.distro.lead" to "远端操作系统是 ",
+            "workspace.ssh.distro.tail" to "。",
+            "workspace.ssh.shell.lead" to " 使用 ",
+            "workspace.ssh.shell.tail" to " 执行命令。",
+            "workspace.ssh.shell.posix.middle" to
+                "(一个 POSIX shell)执行命令。系统里没有 bash,因此不要使用数组、here-string(",
+            "workspace.ssh.shell.posix.tail" to ")、花括号展开这类 bash 专有语法。",
+            "workspace.ssh.tools.lead" to "可用工具:",
+            "workspace.ssh.read.tail" to ":读取文件内容。",
+            "workspace.ssh.tool.shell.tail" to ":在远端机器上执行 shell 命令(默认为工作区目录)。",
+            "workspace.ssh.noWriteTools" to
+                "这个工作区没有写文件与编辑文件的工具。请用 `workspace_shell` 创建和修改文件:" +
+                "新内容用带引号的 heredoc(例如 `cat > file <<'EOF'`),局部修改用 `sed`、`patch` " +
+                "或一小段脚本。优先做局部修改,不要整篇重写。",
+            "workspace.ssh.cwd.lead" to "当前工作目录:",
+            "workspace.ssh.cwd.tail" to "。把它作为文件操作与 shell 命令的默认上下文。",
+
+            // 远程工作区连不上
+            "unreachable.intro.lead" to "你绑定了一个名为 \"",
+            "unreachable.intro.tail" to "\" 的工作区",
+            "unreachable.address.lead" to "(位于 ",
+            "unreachable.address.tail" to " 上)",
+            "unreachable.dir.lead" to ",目录是 ",
+            "unreachable.reason.lead" to ",但它当前连不上:",
+            "unreachable.hint" to
+                "恢复连接前,工作区工具都会失败。如果用户让你在工作区里做事," +
+                "告诉他们这个工作区现在连不上。",
 
             // 记忆段：引导与规则
             "memory.intro" to

@@ -24,7 +24,7 @@ object PromptSegments {
             "- «workspace.mount.lead»`/workspace`«workspace.mount.tail»\n" +
             "- «workspace.paths.lead»`/workspace/notes.md`«workspace.paths.tail»\n",
         "distro" to "- «workspace.distro.lead»‹distro›«workspace.distro.tail»\n",
-        "shell_bash" to "- `workspace_shell`«workspace.shell.bash.lead»`/bin/bash`«workspace.shell.bash.tail»\n",
+        "shell_bash" to "- `workspace_shell`«workspace.shell.bash.lead»`‹shell›`«workspace.shell.bash.tail»\n",
         "shell_posix" to "- `workspace_shell`«workspace.shell.posix.lead»`‹shell›`" +
             "«workspace.shell.posix.middle»`<<<`«workspace.shell.posix.tail»\n",
         "body" to "- «workspace.tools.lead»\n" +
@@ -180,4 +180,40 @@ object PromptSegments {
         "</memory_format>"
 
     val MEMORY: List<PromptGroup> = PromptSkeleton.groups("all" to MEMORY_SKELETON)
+
+    /**
+     * 远程（SSH）工作区提醒。
+     *
+     * 与本地版结构相近，另加两条只有远程才成立的说明：这不是沙箱、没有写文件工具。
+     * 发行版、shell、工作目录都是「有值才出现」的组。
+     */
+    val WORKSPACE_SSH: List<PromptGroup> = PromptSkeleton.groups(
+        "head" to "<workspace>\n" +
+            "«workspace.ssh.intro.lead»‹workspace_name›«workspace.ssh.intro.middle»" +
+            "`‹workspace_address›`«workspace.ssh.intro.tail»\n" +
+            "- «workspace.ssh.dir.lead»`‹workspace_dir›`«workspace.ssh.dir.tail»\n" +
+            "- «workspace.ssh.paths.lead»`‹workspace_dir›/notes.md`«workspace.ssh.paths.tail»\n" +
+            "- «workspace.ssh.notSandbox»\n",
+        "distro" to "- «workspace.ssh.distro.lead»‹distro›«workspace.ssh.distro.tail»\n",
+        "shell_bash" to "- `workspace_shell`«workspace.ssh.shell.lead»`‹shell›`«workspace.ssh.shell.tail»\n",
+        "shell_posix" to "- `workspace_shell`«workspace.ssh.shell.lead»`‹shell›`" +
+            "«workspace.ssh.shell.posix.middle»`<<<`«workspace.ssh.shell.posix.tail»\n",
+        "tools" to "- «workspace.ssh.tools.lead»\n" +
+            "  - `workspace_read_file`«workspace.ssh.read.tail»\n" +
+            "  - `workspace_shell`«workspace.ssh.tool.shell.tail»\n" +
+            "- «workspace.ssh.noWriteTools»\n",
+        "cwd" to "- «workspace.ssh.cwd.lead»`‹cwd›`«workspace.ssh.cwd.tail»\n",
+        "close" to "</workspace>",
+    )
+
+    /** 远程工作区连不上时注入的一段说明：告诉模型现在是断的，别假装能用 */
+    val WORKSPACE_UNREACHABLE: List<PromptGroup> = PromptSkeleton.groups(
+        "head" to "<workspace>\n" +
+            "«unreachable.intro.lead»‹workspace_name›«unreachable.intro.tail»",
+        "address" to "«unreachable.address.lead»`‹workspace_address›`«unreachable.address.tail»",
+        "tail" to "«unreachable.dir.lead»`‹workspace_dir›`" +
+            "«unreachable.reason.lead»‹unreachable_reason›\n" +
+            "- «unreachable.hint»\n" +
+            "</workspace>",
+    )
 }
