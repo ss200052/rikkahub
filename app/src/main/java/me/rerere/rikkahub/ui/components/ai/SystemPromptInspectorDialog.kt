@@ -4,12 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -456,8 +455,9 @@ private fun TextBlock(
                     onValueChange = onDraftChange,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 260.dp)
-                        .verticalScroll(rememberScrollState()),
+                        // 固定高度，交给输入框自己滚动。外面再套 verticalScroll 会
+                        // 给它无限高度约束，逼它一次量完所有行（长文本会卡死）
+                        .height(220.dp),
                     textStyle = MaterialTheme.typography.bodySmall,
                     supportingText = {
                         Text(
