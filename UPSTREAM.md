@@ -79,7 +79,45 @@ git push origin master
 
 ## 打包
 
-工作流是手动触发的（`on: workflow_dispatch`），push 不会自动出包：
+### 本地构建（当前可用的路径）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build-apk.ps1
+```
+
+等价于下面这条（与 CI 完全一致的参数）：
+
+```bash
+./gradlew :app:assembleGithubRelease -x :web:buildWebUi --no-configuration-cache
+```
+
+- `-x :web:buildWebUi` 必须带上：`web-ui/node_modules` 没装也能出包，内置网页服务用不了，
+  聊天功能不受影响（CI 一直如此）。
+- `--no-configuration-cache` 用来绕开 `:common:generateReleaseLintModel` 的配置缓存序列化报错。
+- 首次构建要从 `dl.google.com` 拉依赖。若 `~/.gradle/gradle.properties` 里配了连不通的代理，
+  会报 `Remote host terminated the handshake`；直连可用时把那些 `systemProp.*.proxy*` 注释掉。
+- 产物在 `app/build/outputs/apk/github/release/`：`arm64-v8a`（手机用）、`x86_64`、`universal`。
+  签名与 CI 产物一致（keystore md5 `2f336489f7f70a7a090ddf20526d3fd8`），可直接覆盖安装。
+
+### GitHub Actions（fork 受限）
+
+`ss200052/rikkahub` 是 fork。GitHub 对 fork 的 Actions 用量设有保护阈值，累计用满之后会在
+Actions 页面显示：
+
+> Workflows are not currently being run on this fork due to the scale of GitHub Actions usage.
+
+此时 `workflow_dispatch` 一律返回 422 `Actions has been disabled for this repository`，
+即使 `PUT /repos/{owner}/{repo}/actions/permissions` 返回 204、`GET` 显示 `enabled: true` 也没用
+—— 那是仓库级开关，管不到 fork 这层限制。
+
+恢复方式三选一（前两个需要仓库 admin 的网页操作）：
+
+1. **Leave fork network**（Settings → General → Danger Zone → Leave fork network）。前置条件是
+   public / 小于 1 GB / 没有子 fork，三条当前都满足；操作不可逆，但保留全部提交历史。
+2. 按 Actions 页面提示重新启用该 fork 的 workflows（用量再次触顶会二次被禁）。
+3. 新建一个非 fork 的公开仓库，整仓推过去 —— public 仓库的 Actions 免费额度用不完。
+
+Actions 恢复后，触发方式如下（手动，push 不会自动出包）：
 
 ```bash
 curl -X POST -H "Authorization: token <token>" \
@@ -89,3 +127,6 @@ curl -X POST -H "Authorization: token <token>" \
 ```
 
 产物是 actions artifact（`rikkahub-apk`），下载需要带 Authorization 的请求。
+
+**无论选哪种，都该先处理 `.github/workflows/daily-build.yml`**：它每天 UTC 09:00 / 18:00
+各跑一次完整构建，是 fork 用量触顶的主要来源。删掉或改成低频，否则重新启用后还会再被禁。
