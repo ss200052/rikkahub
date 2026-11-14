@@ -17,7 +17,9 @@ class DefaultProvidersTest {
 
         val provider = vercelProviders.single()
         assertEquals("https://ai-gateway.vercel.sh/v1", provider.baseUrl)
-        assertFalse(provider.enabled)
+        // 3.2.0 起默认提供商统一默认开启（见官方 feat(provider): 默认提供商全部默认开启），
+        // 上游测试没跟着改，这里按实际行为断言
+        assertTrue(provider.enabled)
         assertTrue(provider.builtIn)
         assertTrue(provider.quotaQuery.enabled)
         assertEquals("{{baseUrl}}/credits", provider.quotaQuery.url)

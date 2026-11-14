@@ -179,6 +179,13 @@ private val SAMPLE = Settings(
     systemPromptOverrides = listOf(SystemPromptOverride(blockId = "base", content = "override")),
     systemPromptPresets = listOf(SystemPromptPreset(id = "preset", name = "Preset")),
     promptSchemeId = "zh",
+    customPromptSchemes = listOf(
+        me.rerere.rikkahub.data.ai.CustomPromptScheme(
+            id = "custom-test",
+            name = "测试方案",
+            texts = mapOf("time.prefix" to "现在"),
+        ),
+    ),
     batchKeywordPresets = listOf(
         BatchKeywordPreset(BatchKeywordCategory.COMMIT, "语气", "嗯"),
     ),
@@ -243,5 +250,6 @@ private val STORED_KEYS = setOf(
     "system_prompt_overrides",
     "system_prompt_presets",
     "prompt_scheme_id",
+    "custom_prompt_schemes",
     "batch_keyword_presets",
 )

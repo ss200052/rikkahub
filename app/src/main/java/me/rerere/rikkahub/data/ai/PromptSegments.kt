@@ -31,6 +31,8 @@ object PromptSegments {
             "  - `workspace_read_file`«workspace.read.tail»\n" +
             "  - `workspace_write_file`«workspace.write.lead»`workspace_edit_file`«workspace.write.tail»\n" +
             "  - `workspace_shell`«workspace.shell.tail»\n" +
+            "  - `workspace_shell_output` / `workspace_shell_kill`«workspace.bg.tools.tail»\n" +
+            "- «workspace.bg.hint»\n" +
             "- «workspace.prefer.lead»`workspace_shell`«workspace.prefer.middle»" +
             "`workspace_edit_file`«workspace.prefer.tail»\n" +
             "- «workspace.skills.lead»`/skills`«workspace.skills.a»`/skills/<skill-name>/`" +
