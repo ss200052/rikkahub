@@ -84,6 +84,18 @@ class ChatVM(
     val conversation: StateFlow<Conversation> = chatService.getConversationFlow(_conversationId)
     var chatListInitialized by mutableStateOf(false) // 聊天列表是否已经滚动到底部
 
+    // ---- 本次并发期间的余额消耗 ----
+    // 这三个成员必须在 init 之前声明：init 里的 collect 跑在 Dispatchers.Main.immediate 上，
+    // StateFlow 会同步回放当前值，直接读写这里的状态；若声明晚于 init，委托字段此刻仍是 null，
+    // 赋值就会 NPE 闪退（进入会话即崩）。
+    private val _batchSpent = mutableStateOf<java.math.BigDecimal?>(null)
+
+    /** 本批已经花掉的钱；查不到余额时为 null */
+    val batchSpent: java.math.BigDecimal?
+        get() = _batchSpent.value
+
+    private var spendTrackingJob: Job? = null
+
     // 聊天输入状态 - 保存在 ViewModel 中避免 TransactionTooLargeException
     val inputState = ChatInputState()
 
@@ -592,15 +604,7 @@ class ChatVM(
         chatService.handleToolApproval(_conversationId, toolCallId, approved = true, answer = answer)
     }
 
-    // ---- 本次并发期间的余额消耗 ----
-
-    private val _batchSpent = mutableStateOf<java.math.BigDecimal?>(null)
-
-    /** 本批已经花掉的钱；查不到余额时为 null */
-    val batchSpent: java.math.BigDecimal?
-        get() = _batchSpent.value
-
-    private var spendTrackingJob: Job? = null
+    // ---- 本次并发期间的余额消耗（状态字段已上移到类顶部，见 init 之前的说明） ----
 
     /**
      * 盯余额计算本批消耗。
