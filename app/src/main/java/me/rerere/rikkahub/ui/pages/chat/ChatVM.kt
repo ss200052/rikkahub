@@ -469,7 +469,8 @@ class ChatVM(
 
     fun commitBatchLane(laneIndex: Int, target: CommitTarget) {
         viewModelScope.launch {
-            chatService.commitBatchResult(_conversationId, laneIndex, target)
+            // 不传当前对话：落盘目标由批次自己决定，允许在别的对话里打开工作台后落盘
+            chatService.commitBatchResult(laneIndex, target)
         }
     }
 

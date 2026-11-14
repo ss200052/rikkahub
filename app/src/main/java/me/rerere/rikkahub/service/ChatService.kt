@@ -684,6 +684,7 @@ class ChatService(
                     conversationId = conversationId,
                     targetNodeId = node.id,
                     config = config.normalized(),
+                    conversationTitle = conversation.title,
                     newAgent = {
                         // 每一路、每一次重 roll 都用独立的 processingStatus，互不覆盖
                         requestFactory.createAgent(turn, history, MutableStateFlow<String?>(null))
@@ -746,15 +747,19 @@ class ChatService(
     /**
      * 把某一路的结果落盘。对话锁定时依然允许。
      * 目标节点已被删除时降级为新建分支，避免静默丢内容。
+     *
+     * 写回哪个对话由批次自己决定（[BatchSession.conversationId]），不看调用方在哪个对话：
+     * 工作台是全局的，用户完全可能在 B 对话里重新打开 A 那批任务并点落盘，
+     * 若按当前对话写，目标节点在 B 里不存在，落盘会静默落空。
      */
     suspend fun commitBatchResult(
-        conversationId: Uuid,
         laneIndex: Int,
         target: CommitTarget,
     ) {
         val session = batchController.session.value ?: return
         val lane = session.lane(laneIndex) ?: return
         val message = lane.resultMessage ?: return
+        val conversationId = Uuid.parse(session.conversationId)
 
         if (target == CommitTarget.NEW_BRANCH) {
             commitLaneToNewBranch(conversationId, session.targetNodeId, message, laneIndex)
@@ -789,7 +794,15 @@ class ChatService(
         laneIndex: Int,
     ) {
         val source = withLoadedSession(conversationId) { it.state.value }
-        val node = source.messageNodes.firstOrNull { it.id.toString() == targetNodeId } ?: return
+        val node = source.messageNodes.firstOrNull { it.id.toString() == targetNodeId }
+        if (node == null) {
+            // 目标消息被删了：明确报出来，不要让用户以为已经落盘
+            addError(
+                IllegalStateException("发起本批次的那条消息已不存在，这一路无法落盘"),
+                conversationId,
+            )
+            return
+        }
         val fork = forkConversationAtMessage(
             conversationId = conversationId,
             messageId = node.currentMessage.id,

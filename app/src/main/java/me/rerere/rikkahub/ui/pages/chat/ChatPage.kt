@@ -512,9 +512,12 @@ private fun ChatPageContent(
                     vm.regenerateAtMessage(it)
                 },
                 onBatchRegenerate = { target ->
-                    // 已有未处理的批量结果时直接打开工作台，不再弹一次配置窗
+                    // 已经有批次（可能属于别的对话、可能还在跑）就直接打开工作台，
+                    // 否则会弹出一个注定报「已有一个批量任务在运行」的配置窗
                     val session = batchSession
-                    if (session != null && session.conversationId == conversation.id.toString()) {
+                    if (session != null &&
+                        (!session.finished || session.conversationId == conversation.id.toString())
+                    ) {
                         showBatchPanel = true
                     } else {
                         batchTarget = target
@@ -588,6 +591,13 @@ private fun ChatPageContent(
             if (showBatchPanel && batchLaneSession != null) {
                 BatchGenerationPanel(
                     session = batchLaneSession,
+                    // 在别的对话里打开这一批时，说清楚落盘会写回哪个对话
+                    ownerNotice = batchLaneSession
+                        .takeIf { it.conversationId != conversation.id.toString() }
+                        ?.let { s ->
+                            val title = s.conversationTitle.ifBlank { "另一个对话" }
+                            "这批结果属于「$title」，落盘会写回那个对话"
+                        },
                     onStopLane = { vm.stopBatchLane(it) },
                     onStopAll = { vm.stopBatchAll() },
                     onUnlock = { vm.unlockBatch() },

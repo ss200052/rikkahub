@@ -109,6 +109,7 @@ class BatchGenerationController(
         conversationId: Uuid,
         targetNodeId: Uuid,
         config: BatchRegenerationConfig,
+        conversationTitle: String = "",
         newAgent: () -> Pair<AgentRequest, AgentHooks>,
     ): Boolean = startMutex.withLock {
         if (isRunning) return@withLock false
@@ -117,6 +118,7 @@ class BatchGenerationController(
         val runId = ++runSeq
         _session.value = BatchSession(
             conversationId = conversationId.toString(),
+            conversationTitle = conversationTitle,
             targetNodeId = targetNodeId.toString(),
             config = config,
             lanes = List(config.parallelCount) { LaneState.Idle(it) },

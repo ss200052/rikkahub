@@ -63,6 +63,8 @@ fun BatchGenerationPanel(
     onRerunFailed: () -> Unit = {},
     notifyOnHit: Boolean = true,
     onToggleNotify: (Boolean) -> Unit = {},
+    /** 这一批不属于当前对话时给出的提示，说明落盘会写回哪里；为空则不显示 */
+    ownerNotice: String? = null,
 ) {
     var confirmUnlock by remember { mutableStateOf(false) }
 
@@ -76,6 +78,13 @@ fun BatchGenerationPanel(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("批量重新生成", style = MaterialTheme.typography.titleMedium)
+                        if (ownerNotice != null) {
+                            Text(
+                                text = ownerNotice,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
                         // 每一项独立成块，宽度不够时自动换行，不会挤成一团
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),

@@ -218,8 +218,14 @@ data class LaneHitEvent(
 
 /** 一次批量任务的全部状态 */
 data class BatchSession(
-    /** 发起时所属的对话，用于按对话上锁 */
+    /** 发起时所属的对话，用于按对话上锁；落盘也必须写回这个对话 */
     val conversationId: String,
+    /**
+     * 发起时所属对话的标题。
+     *
+     * 工作台是全局的：用户可能在别的对话里重新打开这一批，需要明确告诉他结果会写回哪个对话。
+     */
+    val conversationTitle: String = "",
     /** 目标用户消息所在的节点 id */
     val targetNodeId: String,
     val config: BatchRegenerationConfig,
