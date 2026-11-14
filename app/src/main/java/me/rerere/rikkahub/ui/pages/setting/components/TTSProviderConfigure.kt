@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +59,7 @@ fun TTSProviderConfigure(
                         is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
                         is TTSProviderSetting.FishAudio -> "Fish Audio"
                         is TTSProviderSetting.Volcengine -> "火山引擎"
+                        is TTSProviderSetting.DeepSeek -> "DeepSeek"
                     },
                     options = TTSProviderSetting.Types,
                     readOnly = true,
@@ -75,6 +77,7 @@ fun TTSProviderConfigure(
                             TTSProviderSetting.ElevenLabs::class -> "ElevenLabs"
                             TTSProviderSetting.FishAudio::class -> "Fish Audio"
                             TTSProviderSetting.Volcengine::class -> "火山引擎"
+                            TTSProviderSetting.DeepSeek::class -> "DeepSeek"
                             TTSProviderSetting.Step::class -> "Step"
                             else -> providerClass.simpleName ?: "Unknown"
                         }
@@ -94,6 +97,11 @@ fun TTSProviderConfigure(
                             TTSProviderSetting.SystemTTS::class -> TTSProviderSetting.SystemTTS(
                                 id = setting.id,
                                 name = "System TTS"
+                            )
+
+                            TTSProviderSetting.DeepSeek::class -> TTSProviderSetting.DeepSeek(
+                                id = setting.id,
+                                name = "DeepSeek TTS"
                             )
 
                             TTSProviderSetting.MiniMax::class -> TTSProviderSetting.MiniMax(
@@ -169,6 +177,7 @@ fun TTSProviderConfigure(
                 is TTSProviderSetting.SystemTTS -> systemTTSItems(setting, onValueChange)
                 is TTSProviderSetting.Qwen -> qwenTTSItems(setting, onValueChange)
                 is TTSProviderSetting.Groq -> groqTTSItems(setting, onValueChange)
+                is TTSProviderSetting.DeepSeek -> deepSeekTTSItems(setting, onValueChange)
                 is TTSProviderSetting.XAI -> xAITTSItems(setting, onValueChange)
                 is TTSProviderSetting.MiMo -> miMoTTSItems(setting, onValueChange)
                 is TTSProviderSetting.ElevenLabs -> elevenLabsTTSItems(setting, onValueChange)
@@ -730,6 +739,92 @@ private fun CardGroupScope.groqTTSItems(
                 onValueChange(setting.copy(voice = voice))
             },
             modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+private fun CardGroupScope.deepSeekTTSItems(
+    setting: TTSProviderSetting.DeepSeek,
+    onValueChange: (TTSProviderSetting) -> Unit
+) {
+    // API Key
+    formItem(
+        headlineContent = { Text(stringResource(R.string.setting_tts_page_api_key)) },
+        supportingContent = { Text(stringResource(R.string.setting_tts_page_api_key_description)) }
+    ) {
+        OutlinedTextField(
+            value = setting.apiKey,
+            onValueChange = { newApiKey ->
+                onValueChange(setting.copy(apiKey = newApiKey))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("sk-xxx") },
+        )
+    }
+
+    // Base URL
+    formItem(
+        headlineContent = { Text(stringResource(R.string.setting_tts_page_base_url)) },
+        supportingContent = { Text(stringResource(R.string.setting_tts_page_base_url_description)) }
+    ) {
+        OutlinedTextField(
+            value = setting.baseUrl,
+            onValueChange = { newBaseUrl ->
+                onValueChange(setting.copy(baseUrl = newBaseUrl))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("https://api.deepseek.com/v1") }
+        )
+    }
+
+    // 音色：DeepSeek 只提供两个，语种由服务端按文本自动识别
+    val voices = listOf("stella", "tide")
+
+    formItem(
+        headlineContent = { Text(stringResource(R.string.setting_tts_page_voice)) },
+        supportingContent = { Text("stella 女声（海星），tide 男声（暗潮）。语种按文本自动识别。") }
+    ) {
+        SelectTextField(
+            value = setting.voiceId,
+            options = voices,
+            onValueChange = { newVoice ->
+                onValueChange(setting.copy(voiceId = newVoice))
+            },
+            onOptionSelected = { voice ->
+                onValueChange(setting.copy(voiceId = voice))
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    // 输出格式
+    formItem(
+        headlineContent = { Text("音频格式") },
+        supportingContent = { Text("wav 带容器可直接播放；pcm 是 24kHz 16bit 单声道裸数据。") }
+    ) {
+        SelectTextField(
+            value = setting.format,
+            options = listOf("wav", "pcm"),
+            onValueChange = { newFormat ->
+                onValueChange(setting.copy(format = newFormat))
+            },
+            onOptionSelected = { format ->
+                onValueChange(setting.copy(format = format))
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    // Markdown 过滤
+    formItem(
+        headlineContent = { Text("朗读前去掉 Markdown") },
+        supportingContent = { Text("开启后不会把 **、# 这类标记念出来。") }
+    ) {
+        Switch(
+            checked = setting.filterMarkdown,
+            onCheckedChange = { enabled ->
+                onValueChange(setting.copy(filterMarkdown = enabled))
+            }
         )
     }
 }

@@ -41,6 +41,12 @@ internal val DEFAULT_TTS_PROVIDERS = listOf(
         id = DEFAULT_SYSTEM_TTS_ID,
         name = "",
     ),
+    TTSProviderSetting.DeepSeek(
+        id = Uuid.parse("7c1f5e2a-9b04-4d63-8a51-2f6c8d1b3e70"),
+        name = "DeepSeek TTS",
+        apiKey = "",
+        voiceId = "stella",
+    ),
     TTSProviderSetting.OpenAI(
         id = Uuid.parse("e36b22ef-ca82-40ab-9e70-60cad861911c"),
         name = "AiHubMix",

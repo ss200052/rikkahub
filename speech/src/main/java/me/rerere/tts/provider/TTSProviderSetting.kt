@@ -298,6 +298,30 @@ sealed class TTSProviderSetting {
             copy(id = id, name = name)
     }
 
+    /**
+     * DeepSeek 语音合成。
+     *
+     * 接口是 `POST {baseUrl}/tools/tts`，正文最多 10000 个计费字符；
+     * 语种由服务端按文本自动识别，所以这里只需要选音色。
+     */
+    @Serializable
+    @SerialName("deepseek")
+    data class DeepSeek(
+        override var id: Uuid = Uuid.random(),
+        override var name: String = "DeepSeek TTS",
+        val apiKey: String = "",
+        val baseUrl: String = "https://api.deepseek.com/v1",
+        /** stella：女声（海星，默认）；tide：男声（暗潮） */
+        val voiceId: String = "stella",
+        /** wav 带容器可直接播放；pcm 是 24kHz 16bit 单声道裸数据 */
+        val format: String = "wav",
+        /** 朗读前去掉 Markdown 标记，默认开启 */
+        val filterMarkdown: Boolean = true,
+    ) : TTSProviderSetting() {
+        override fun copyProvider(id: Uuid, name: String): TTSProviderSetting =
+            copy(id = id, name = name)
+    }
+
     companion object {
         val Types by lazy {
             listOf(
@@ -313,6 +337,7 @@ sealed class TTSProviderSetting {
                 Step::class,
                 FishAudio::class,
                 Volcengine::class,
+                DeepSeek::class,
             )
         }
     }

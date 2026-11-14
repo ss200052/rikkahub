@@ -7,6 +7,7 @@ import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.providers.ElevenLabsTTSProvider
 import me.rerere.tts.provider.providers.FishAudioTTSProvider
 import me.rerere.tts.provider.providers.GeminiTTSProvider
+import me.rerere.tts.provider.providers.DeepSeekTTSProvider
 import me.rerere.tts.provider.providers.GroqTTSProvider
 import me.rerere.tts.provider.providers.MiMoTTSProvider
 import me.rerere.tts.provider.providers.MiniMaxTTSProvider
@@ -24,6 +25,7 @@ class TTSManager(private val context: Context) {
     private val miniMaxProvider = MiniMaxTTSProvider()
     private val qwenProvider = QwenTTSProvider()
     private val groqProvider = GroqTTSProvider()
+    private val deepSeekProvider = DeepSeekTTSProvider()
     private val xaiProvider = XAITTSProvider()
     private val miMoProvider = MiMoTTSProvider()
     private val stepProvider = StepTTSProvider()
@@ -42,6 +44,7 @@ class TTSManager(private val context: Context) {
             is TTSProviderSetting.MiniMax -> miniMaxProvider.generateSpeech(context, providerSetting, request)
             is TTSProviderSetting.Qwen -> qwenProvider.generateSpeech(context, providerSetting, request)
             is TTSProviderSetting.Groq -> groqProvider.generateSpeech(context, providerSetting, request)
+            is TTSProviderSetting.DeepSeek -> deepSeekProvider.generateSpeech(context, providerSetting, request)
             is TTSProviderSetting.XAI -> xaiProvider.generateSpeech(context, providerSetting, request)
             is TTSProviderSetting.MiMo -> miMoProvider.generateSpeech(context, providerSetting, request)
             is TTSProviderSetting.ElevenLabs -> elevenLabsProvider.generateSpeech(context, providerSetting, request)
@@ -63,6 +66,7 @@ class TTSManager(private val context: Context) {
             is TTSProviderSetting.MiniMax -> miniMaxProvider.promptGuidance
             is TTSProviderSetting.Qwen -> qwenProvider.promptGuidance
             is TTSProviderSetting.Groq -> groqProvider.promptGuidance
+            is TTSProviderSetting.DeepSeek -> deepSeekProvider.promptGuidance
             is TTSProviderSetting.XAI -> xaiProvider.promptGuidance
             is TTSProviderSetting.MiMo -> miMoProvider.promptGuidance
             is TTSProviderSetting.ElevenLabs -> elevenLabsProvider.promptGuidance
