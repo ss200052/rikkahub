@@ -12,6 +12,7 @@ import me.rerere.ai.agent.AgentHooks
 import me.rerere.ai.agent.AgentRequest
 import me.rerere.ai.agent.RetryPolicy
 import me.rerere.ai.agent.StepRequest
+import me.rerere.ai.agent.expandNotices
 import me.rerere.ai.agent.withRetry
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.MessageRole
@@ -22,6 +23,7 @@ import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.limitContext
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.prompts.buildMemoryPrompt
@@ -147,6 +149,7 @@ class ChatRequestFactory(
                 settings = settings,
                 assistant = assistant,
                 model = model,
+                conversationId = conversation.id,
                 workspaceCwd = conversation.workspaceCwd,
             ),
         )
@@ -154,12 +157,13 @@ class ChatRequestFactory(
 
     /**
      * 本轮交给 runAgent 的请求和钩子。[messages] 的最后一条是助手消息时从它继续，否则新建一条助手消息。
-     * [processingStatus] 用来显示 OCR 这类输入转换的进度。
+     * [processingStatus] 用来显示 OCR 这类输入转换的进度；[takePendingParts] 取出要在请求模型前写进助手消息的通知。
      */
     fun createAgent(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
+        takePendingParts: suspend () -> List<UIMessagePart> = { emptyList() },
     ): Pair<AgentRequest, AgentHooks> {
         // 工具执行时拿不到设置，把方案记在运行期状态里，让工具返回的提示语跟着方案语言走
         PromptRuntime.setScheme(turn.settings.promptSchemeId)
@@ -195,6 +199,8 @@ class ChatRequestFactory(
                         .visualTransforms(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                         .onGenerationFinish(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                 }
+
+            override suspend fun pendingParts() = takePendingParts()
         }
         return request to hooks
     }
@@ -572,7 +578,7 @@ class ChatRequestFactory(
             settings = turn.settings,
             processingStatus = processingStatus,
             workspaceCwd = turn.workspaceCwd,
-        )
+        ).expandNotices()
     }
 }
 
