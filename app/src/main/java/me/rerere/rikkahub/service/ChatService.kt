@@ -705,6 +705,18 @@ class ChatService(
 
     fun stopBatchAll() = batchController.stopAll()
 
+    /**
+     * 弹窗里改一次就存一次，不等「开始」。
+     *
+     * 用 appScope 而不是调用方的 viewModelScope：用户改完参数直接退出页面或杀掉 App 时，
+     * viewModelScope 会连同协程一起取消，那样这次改动就白改了。
+     */
+    fun saveBatchConfig(config: BatchRegenerationConfig) {
+        appScope.launch {
+            settingsStore.update { it.copy(batchRegeneration = config) }
+        }
+    }
+
     /** 重跑某一路（失败、截断都能再来一次） */
     /** 读取当前生效的全部提示词分段（含工具描述、注入、合成消息），供检查器预览 */
     suspend fun buildSystemPromptBlocks(conversationId: Uuid): List<SystemPromptBlock> {

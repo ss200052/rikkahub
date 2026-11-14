@@ -203,8 +203,8 @@ fun ChatPage(
     LaunchedEffect(nodeId, messageId, conversation.messageNodes.size) {
         if (!vm.chatListInitialized && conversation.messageNodes.isNotEmpty()) {
             if (nodeId != null) {
-                val index = conversation.messageNodes.indexOfFirst { it.id == nodeId }
-                if (index >= 0) {
+                val index = jumpTargetIndex(conversation.messageNodes, nodeId)
+                if (index != null) {
                     if (messageId != null) {
                         val node = conversation.messageNodes[index]
                         val branchIndex = node.messages.indexOfFirst { it.id == messageId }
@@ -574,16 +574,22 @@ private fun ChatPageContent(
             )
 
             // ---- 批量重新生成 ----
-            batchTarget?.let { target ->
+            // 设置没加载完之前不能开这个弹窗：vm.settings 的初始值是 Settings.dummy()，
+            // 它的 batchRegeneration 是全默认（并发 4、关键词空）。用户在这份默认值上改一下再保存，
+            // 就会把盘上真实的关键词和并发路数覆盖成默认——重启后看起来就是「设置被清掉了」。
+            val pendingBatchTarget = batchTarget
+            if (pendingBatchTarget != null && !setting.init) {
                 BatchRegenerateDialog(
                     initial = vm.lastBatchConfig,
                     presets = setting.batchKeywordPresets,
                     onDismiss = { batchTarget = null },
                     onStart = { config ->
                         batchTarget = null
-                        vm.startBatchRegenerate(target, config)
+                        vm.startBatchRegenerate(pendingBatchTarget, config)
                     },
                     onPresetsChange = { vm.saveBatchKeywordPresets(it) },
+                    // 弹窗里每改一处就落库：不点「开始」、直接取消、甚至重启 App 都还在
+                    onConfigChange = { vm.saveBatchConfig(it) },
                 )
             }
 
@@ -597,6 +603,19 @@ private fun ChatPageContent(
                         ?.let { s ->
                             val title = s.conversationTitle.ifBlank { "另一个对话" }
                             "这批结果属于「$title」，落盘会写回那个对话"
+                        },
+                    // 切到发起批次的那个对话，并定位到发起时的那一轮（目标用户消息）
+                    onGoToOwner = batchLaneSession
+                        .takeIf { it.conversationId != conversation.id.toString() }
+                        ?.let { s ->
+                            {
+                                showBatchPanel = false
+                                navigateToChatPage(
+                                    navigator = navController,
+                                    chatId = Uuid.parse(s.conversationId),
+                                    nodeId = Uuid.parse(s.targetNodeId),
+                                )
+                            }
                         },
                     onStopLane = { vm.stopBatchLane(it) },
                     onStopAll = { vm.stopBatchAll() },

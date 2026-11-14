@@ -22,6 +22,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,7 @@ import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.KeywordScope
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /** 落盘词的匹配范围选项 */
 private enum class CommitScopeOption(val scope: KeywordScope, val label: String) {
@@ -70,6 +72,13 @@ fun BatchRegenerateDialog(
     onDismiss: () -> Unit,
     onStart: (BatchRegenerationConfig) -> Unit,
     onPresetsChange: (List<BatchKeywordPreset>) -> Unit,
+    /**
+     * 弹窗里每改一处就回报一次，由调用方落库。
+     *
+     * 不依赖「开始」按钮：哪怕只是调了下并发路数就取消、甚至直接杀掉 App，
+     * 下次打开弹窗看到的也还是刚才那一份。
+     */
+    onConfigChange: (BatchRegenerationConfig) -> Unit = {},
 ) {
     var parallel by remember {
         mutableIntStateOf(initial.parallelCount.coerceIn(1, BatchRegenerationConfig.MAX_PARALLEL))
@@ -82,8 +91,38 @@ fun BatchRegenerateDialog(
     var commitScope by remember { mutableStateOf(initial.commitScope) }
     var reasoningOverride by remember { mutableStateOf(initial.reasoningLevelOverride) }
 
+    fun currentConfig(): BatchRegenerationConfig = initial.copy(
+        parallelCount = parallel,
+        commitKeywords = commitKeywords,
+        rerollReasoningKeywords = reasoningKeywords,
+        rerollTextKeywords = textKeywords,
+        maxRerollsPerLane = rerollLimit,
+        rerollOnNoHit = rerollOnNoHit,
+        commitScope = commitScope,
+        reasoningLevelOverride = reasoningOverride,
+    )
+
+    // 改动即落库。连续改动（拖并发滑杆、连打字）靠 delay 去抖，停下后只写一次
+    LaunchedEffect(
+        parallel,
+        commitKeywords,
+        reasoningKeywords,
+        textKeywords,
+        rerollLimit,
+        rerollOnNoHit,
+        commitScope,
+        reasoningOverride,
+    ) {
+        delay(300)
+        onConfigChange(currentConfig())
+    }
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        // 点外部 / 返回键也算一次改动结束，先落库再关
+        onDismissRequest = {
+            onConfigChange(currentConfig())
+            onDismiss()
+        },
         title = { Text("批量重新生成") },
         text = {
             Column(
@@ -228,23 +267,21 @@ fun BatchRegenerateDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onStart(
-                        initial.copy(
-                            parallelCount = parallel,
-                            commitKeywords = commitKeywords,
-                            rerollReasoningKeywords = reasoningKeywords,
-                            rerollTextKeywords = textKeywords,
-                            maxRerollsPerLane = rerollLimit,
-                            rerollOnNoHit = rerollOnNoHit,
-                            commitScope = commitScope,
-                            reasoningLevelOverride = reasoningOverride,
-                        ),
-                    )
+                    val config = currentConfig()
+                    // 先落库再开跑：即使下面一路报错、或用户马上杀进程，这份设置也留下来了
+                    onConfigChange(config)
+                    onStart(config)
                 },
             ) { Text("开始") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(
+                onClick = {
+                    // 取消也保留：改都改了，下次打开还该是这一份
+                    onConfigChange(currentConfig())
+                    onDismiss()
+                },
+            ) { Text("取消") }
         },
     )
 }

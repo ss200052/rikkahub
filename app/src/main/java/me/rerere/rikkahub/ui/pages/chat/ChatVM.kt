@@ -299,11 +299,21 @@ class ChatVM(
         get() = settings.value.batchRegeneration
 
     fun startBatchRegenerate(message: UIMessage, config: BatchRegenerationConfig) {
-        // 记住这次的参数，下次弹窗直接带上
-        viewModelScope.launch {
-            settingsStore.update { it.copy(batchRegeneration = config) }
-        }
+        // 记住这次的参数，下次弹窗直接带上。
+        // 走 appScope：点「开始」后马上切走或退出页面时 viewModelScope 会被取消，
+        // 那样这次写入就跟着没了，重启后设置回到默认值。
+        chatService.saveBatchConfig(config)
         chatService.startBatchRegenerate(_conversationId, message.id, config)
+    }
+
+    /**
+     * 弹窗里只要改动就存一份，不等「开始」。
+     *
+     * 走 appScope 而不是 viewModelScope：用户改完参数直接退出页面/杀进程时，
+     * viewModelScope 已被取消，写盘会连同协程一起丢掉。
+     */
+    fun saveBatchConfig(config: BatchRegenerationConfig) {
+        chatService.saveBatchConfig(config)
     }
 
     /** 弹窗里的关键词库：调用方已经算好新列表，这里去空去重后整份存下 */

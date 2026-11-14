@@ -34,10 +34,14 @@ private const val MAX_RATE_LIMIT_RETRIES = 5
 private const val RATE_LIMIT_BASE_DELAY_MS = 2_000L
 
 /**
- * 判断异常是否表示被服务端限流。
+ * 判断异常是否表示「服务端暂时接不了这个请求」。
  *
  * provider 会把响应体原样透传上来（例如 `429 too many requests`），
  * 而 ai 模块里没有对应的错误类型，只能按文本识别；顺带兼容常见的限流措辞。
+ *
+ * 503（服务器繁忙）也算：官方错误码里它和 429 一样都是「稍后重试」，
+ * 而且并发一高更容易撞上。不把它算进来，那一路会直接判失败退出，
+ * 表现就是并发路数上不去。
  */
 private fun Throwable.isRateLimited(): Boolean {
     var current: Throwable? = this
@@ -47,7 +51,11 @@ private fun Throwable.isRateLimited(): Boolean {
         if (text.contains("429") ||
             text.contains("too many request") ||
             text.contains("rate limit") ||
-            text.contains("concurrent")
+            text.contains("concurrent") ||
+            text.contains("503") ||
+            text.contains("server busy") ||
+            text.contains("overloaded") ||
+            text.contains("服务器繁忙")
         ) {
             return true
         }

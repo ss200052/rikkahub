@@ -65,6 +65,8 @@ fun BatchGenerationPanel(
     onToggleNotify: (Boolean) -> Unit = {},
     /** 这一批不属于当前对话时给出的提示，说明落盘会写回哪里；为空则不显示 */
     ownerNotice: String? = null,
+    /** 跨对话时提供的「回到所属对话」动作；为 null 则不显示入口 */
+    onGoToOwner: (() -> Unit)? = null,
 ) {
     var confirmUnlock by remember { mutableStateOf(false) }
 
@@ -84,6 +86,18 @@ fun BatchGenerationPanel(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.tertiary,
                             )
+                            if (onGoToOwner != null) {
+                                TextButton(
+                                    onClick = onGoToOwner,
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                                    modifier = Modifier.heightIn(min = 0.dp),
+                                ) {
+                                    Text(
+                                        text = "回到该任务所属对话",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                            }
                         }
                         // 每一项独立成块，宽度不够时自动换行，不会挤成一团
                         FlowRow(
