@@ -47,6 +47,7 @@ import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Edit01
 import me.rerere.hugeicons.stroke.FavouriteCircle
 import me.rerere.hugeicons.stroke.GitFork
+import me.rerere.hugeicons.stroke.ArrowTurnBackward
 import me.rerere.hugeicons.stroke.Layers01
 import me.rerere.hugeicons.stroke.MoreVertical
 import me.rerere.hugeicons.stroke.Refresh03
@@ -76,6 +77,8 @@ fun ColumnScope.ChatMessageActionButtons(
     onRegenerate: () -> Unit,
     onOpenActionSheet: () -> Unit,
     onBatchRegenerate: (() -> Unit)? = null,
+    /** 继续生成：从这条助手消息接着往下写（只对最后一条传入） */
+    onContinue: (() -> Unit)? = null,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
     onClearTranslation: (UIMessage) -> Unit = {},
 ) {
@@ -114,12 +117,25 @@ fun ColumnScope.ChatMessageActionButtons(
             },
         )
 
-        // 批量重新生成：与「重新生成」并列，只对用户消息显示
-        if (message.role == MessageRole.USER && onBatchRegenerate != null) {
+        // 批量：用户消息是「重新生成这一轮」，助手消息是「接着这条往下写几路」
+        if (onBatchRegenerate != null) {
             ChatMessageActionButton(
                 icon = HugeIcons.Layers01,
-                contentDescription = "批量重新生成",
+                contentDescription = if (message.role == MessageRole.USER) {
+                    "批量重新生成"
+                } else {
+                    "批量并发续写"
+                },
                 onClick = onBatchRegenerate,
+            )
+        }
+
+        // 继续生成：只对最后一条助手消息提供
+        if (message.role == MessageRole.ASSISTANT && onContinue != null) {
+            ChatMessageActionButton(
+                icon = HugeIcons.ArrowTurnBackward,
+                contentDescription = "继续生成",
+                onClick = onContinue,
             )
         }
 

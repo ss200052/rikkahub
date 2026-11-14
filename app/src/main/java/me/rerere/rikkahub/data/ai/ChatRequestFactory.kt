@@ -124,6 +124,8 @@ class ChatRequestFactory(
          */
         reasoningLevelOverride: ReasoningLevel? = null,
     ): ChatTurnContext {
+        // 让方案查找认识用户另存的方案：所有组装都会经过这里
+        PromptSchemes.installCustom(settings.customPromptSchemes)
         // 模型、思考级别、搜索、工具等以会话上固定的配置为准
         val assistant = settings.getAssistantOf(conversation).let { base ->
             if (reasoningLevelOverride == null) base else base.copy(reasoningLevel = reasoningLevelOverride)
@@ -519,25 +521,7 @@ class ChatRequestFactory(
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     ): StepRequest {
         val assistant = turn.assistant
-        val requestMessages = buildList {
-            // 块与预览同源；空块直接跳过，避免多余的空白行
-            val system = buildSystemPromptBlocks(turn, messages)
-                .map { it.content.trim() }
-                .filter { it.isNotEmpty() }
-                .joinToString("\n\n")
-            if (system.isNotBlank()) {
-                add(UIMessage.system(prompt = system).copy(isSynthetic = true))
-            }
-            addAll(messages.limitContext(assistant.contextMessageLimit))
-        }.transforms(
-            transformers = inputTransformers,
-            context = context,
-            model = turn.model,
-            assistant = assistant,
-            settings = turn.settings,
-            processingStatus = processingStatus,
-            workspaceCwd = turn.workspaceCwd,
-        )
+        val requestMessages = assembleRequestMessages(turn, messages, processingStatus)
         val params = TextGenerationParams(
             model = turn.model,
             temperature = assistant.temperature,
@@ -556,6 +540,39 @@ class ChatRequestFactory(
             sessionId = turn.conversationId.toString(),
         )
         return StepRequest(requestMessages, params)
+    }
+
+    /**
+     * 真正会发给模型的那串消息：系统提示词 + 按上下文上限裁剪后的历史，再过一遍输入转换器。
+     *
+     * 正常组装与「查看请求体」共用这里，保证预览看到的就是实际发送的内容
+     * （包括时间提醒、工区提醒这类在转换阶段才生成的片段）。
+     */
+    suspend fun assembleRequestMessages(
+        turn: ChatTurnContext,
+        messages: List<UIMessage>,
+        processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
+    ): List<UIMessage> {
+        val assistant = turn.assistant
+        return buildList {
+            // 块与预览同源；空块直接跳过，避免多余的空白行
+            val system = buildSystemPromptBlocks(turn, messages)
+                .map { it.content.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString("\n\n")
+            if (system.isNotBlank()) {
+                add(UIMessage.system(prompt = system).copy(isSynthetic = true))
+            }
+            addAll(messages.limitContext(assistant.contextMessageLimit))
+        }.transforms(
+            transformers = inputTransformers,
+            context = context,
+            model = turn.model,
+            assistant = assistant,
+            settings = turn.settings,
+            processingStatus = processingStatus,
+            workspaceCwd = turn.workspaceCwd,
+        )
     }
 }
 

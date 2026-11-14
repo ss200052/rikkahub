@@ -34,12 +34,17 @@ internal fun Conversation.editMessage(messageId: Uuid, parts: List<UIMessagePart
         // 摘要原地改写：新建分支会丢掉检查点标记，删除摘要时还会露出旧版本。
         original.copy(parts = parts)
     } else {
-        UIMessage(
-            role = node.role,
+        // 编辑结果作为新候选（原版本留作分支可切回），所以换一个新 id。
+        // 计量必须清空：上下文占用、缓存命中、用量与耗时都是「那次请求针对原来那段内容」的记录，
+        // 内容一改它们就不再描述这条消息，留着会让界面显示一个错误的上下文占用。
+        // 续写之后新请求会带回真实值，那时显示的才是准的。
+        original.copy(
+            id = kotlin.uuid.Uuid.random(),
             parts = parts,
-            // 编辑的是原消息的内容，来源仍是生成它的模型
-            modelId = original.modelId,
-            modelSnapshot = original.modelSnapshot,
+            usage = null,
+            lastUsage = null,
+            generationTimeMs = null,
+            stepCount = null,
         )
     }
     return upsertMessage(node.id, edited)

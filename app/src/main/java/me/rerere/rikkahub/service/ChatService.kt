@@ -318,6 +318,7 @@ class ChatService(
     private fun launchGenerationJob(
         conversationId: Uuid,
         keepAliveInBackground: Boolean = true,
+        keepAwakeWhileScreenOff: Boolean = false,
         block: suspend () -> Unit,
     ): Job {
         if (!keepAliveInBackground) return appScope.launch(start = CoroutineStart.LAZY) { block() }
@@ -328,6 +329,7 @@ class ChatService(
                 context = context,
                 generationId = generationId,
                 conversationId = conversationId,
+                keepAwakeWhileScreenOff = keepAwakeWhileScreenOff,
             )
             try {
                 block()
@@ -580,6 +582,37 @@ class ChatService(
     // ---- 重新生成消息 ----
 
     /** 重新生成用户消息时去掉它之后的节点再回复；重新生成助手消息时在它的节点上新开一个分支 */
+    /**
+     * 继续生成：让模型从最后一条助手消息接着往下写，而不是重写整条。
+     *
+     * 走的是常规生成通道——[runTurn] 发现历史最后一条是助手消息时本来就会续写它，
+     * 所以这里只需要不带「重新生成节点」启动一轮。新内容追加在同一条消息里。
+     */
+    fun continueGeneration(conversationId: Uuid) {
+        if (blockIfBatchLocked(conversationId)) return
+        val session = sessionManager.getOrCreate(conversationId)
+        synchronized(session) {
+            val previousJob = session.getJob()
+            val job = launchGenerationJob(conversationId = conversationId) {
+                try {
+                    previousJob?.join()
+                    session.replyMessageId.value = null
+                    ensureInitialized(session)
+                    val messages = session.state.value.currentMessages
+                    // 只有最后一条是助手消息时才谈得上续写
+                    if (messages.lastOrNull()?.role != MessageRole.ASSISTANT) {
+                        return@launchGenerationJob
+                    }
+                    runTurn(session)
+                    _generationDoneFlow.emit(conversationId)
+                } catch (e: Exception) {
+                    reportFailure(session, e, R.string.error_title_regenerate_message)
+                }
+            }
+            job.start()
+        }
+    }
+
     fun regenerateAtMessage(conversationId: Uuid, messageId: Uuid) {
         if (blockIfBatchLocked(conversationId)) return
         val session = sessionManager.getOrCreate(conversationId)
@@ -623,9 +656,23 @@ class ChatService(
         batchController.session.value
             ?.let { it.locked && it.conversationId == conversationId.toString() } == true
 
-    /** 批量结果未处理时拦住所有会改动会话数据的操作；返回 true 表示已经拦下 */
-    private fun blockIfBatchLocked(conversationId: Uuid): Boolean {
+    /**
+     * 批量结果未处理时拦住会改动会话数据的操作；返回 true 表示已经拦下。
+     *
+     * [nodeId] 只用于切换分支：请求体是「目标那条用户消息及之前」组装出来的快照，
+     * 目标之后（含本轮生成出来的回复）根本不在请求里，切它们的分支不影响任何已发出的请求，
+     * 所以只拦目标节点和它之前的切换——这样也正好提示用户哪些历史进了请求体。
+     */
+    private fun blockIfBatchLocked(conversationId: Uuid, nodeId: Uuid? = null): Boolean {
         if (!isBatchLocked(conversationId)) return false
+        if (nodeId != null) {
+            val session = batchController.session.value
+            val nodes = sessionManager.get(conversationId)?.state?.value?.messageNodes
+            val switchingIndex = nodes?.indexOfFirst { it.id == nodeId } ?: -1
+            val targetIndex = nodes?.indexOfFirst { it.id.toString() == session?.targetNodeId } ?: -1
+            // 目标之后的节点不在请求体里，放行
+            if (switchingIndex >= 0 && targetIndex >= 0 && switchingIndex > targetIndex) return false
+        }
         addError(
             IllegalStateException("批量结果未处理，请先在批量面板里解锁该对话"),
             conversationId,
@@ -662,14 +709,22 @@ class ChatService(
             return
         }
 
-        val job = launchGenerationJob(conversationId = conversationId) {
+        val job = launchGenerationJob(
+            conversationId = conversationId,
+            // 熄屏是否继续，由批量设置里的开关决定
+            keepAwakeWhileScreenOff = config.keepAwakeWhileScreenOff,
+        ) {
             try {
                 val session = sessionManager.getOrCreate(conversationId)
                 ensureInitialized(session)
                 val conversation = session.state.value
                 val node = conversation.getMessageNodeByMessageId(messageId)
                     ?: return@launchGenerationJob
-                if (node.role != MessageRole.USER) return@launchGenerationJob
+                // 目标是用户消息＝重新生成；目标是助手消息＝续写（从它接着往下写）
+                val continueFromAssistant = node.role == MessageRole.ASSISTANT
+                if (!continueFromAssistant && node.role != MessageRole.USER) {
+                    return@launchGenerationJob
+                }
                 val targetIndex = conversation.messageNodes.indexOfFirst { it.id == node.id }
                 if (targetIndex == -1) return@launchGenerationJob
 
@@ -677,14 +732,18 @@ class ChatService(
                 // 请求上下文只组装一次，N 路共用同一份快照，结果才可比
                 // 弹窗里选了思考深度就在这里临时覆盖，不改动会话本身的设置
                 val turn = requestFactory.createContext(settings, conversation, config.reasoningLevelOverride)
-                // 必须包含目标用户消息本身；漏掉它请求体里就只剩系统提示词和更早的历史
+                // 必须包含目标那条消息本身：重新生成时是目标用户消息，
+                // 续写时是那条被截断的助手消息——模型正是从它接着写
                 val history = conversation.currentMessages.take(targetIndex + 1)
+                // 续写时把这条已有的回复留作每路结果的前缀
+                val prefix = if (continueFromAssistant) node.currentMessage else null
 
                 batchController.start(
                     conversationId = conversationId,
                     targetNodeId = node.id,
                     config = config.normalized(),
                     conversationTitle = conversation.title,
+                    continuePrefix = prefix,
                     newAgent = {
                         // 每一路、每一次重 roll 都用独立的 processingStatus，互不覆盖
                         requestFactory.createAgent(turn, history, MutableStateFlow<String?>(null))
@@ -703,6 +762,18 @@ class ChatService(
 
     fun stopBatchLane(index: Int) = batchController.stopLane(index)
 
+    /** 运行中临时再插一路；返回 false 表示插入不了（到上限或批次已结束） */
+    fun addBatchLane(): Boolean = batchController.addLane()
+
+    /** 运行中只调轮次上限，其余参数不动 */
+    fun updateBatchMaxRerolls(limit: Int) = batchController.updateMaxRerolls(limit)
+
+    /** 运行中切换「熄屏也跑」：立即增减唤醒锁 */
+    fun updateBatchKeepAwake(enabled: Boolean) {
+        batchController.updateKeepAwake(enabled)
+        ChatGenerationForegroundService.setKeepAwake(context, enabled)
+    }
+
     fun stopBatchAll() = batchController.stopAll()
 
     /**
@@ -718,6 +789,20 @@ class ChatService(
     }
 
     /** 重跑某一路（失败、截断都能再来一次） */
+    /**
+     * 本次请求真正会发出去的消息：系统提示词 + 裁剪后的历史，已过输入转换器。
+     *
+     * 只读预览用，不落盘、不改会话。
+     */
+    suspend fun buildRequestMessages(conversationId: Uuid): List<UIMessage> {
+        val session = sessionManager.getOrCreate(conversationId)
+        ensureInitialized(session)
+        val conversation = session.state.value
+        val settings = settingsStore.awaitLoaded()
+        val turn = requestFactory.createContext(settings, conversation)
+        return requestFactory.assembleRequestMessages(turn, conversation.currentMessages)
+    }
+
     /** 读取当前生效的全部提示词分段（含工具描述、注入、合成消息），供检查器预览 */
     suspend fun buildSystemPromptBlocks(conversationId: Uuid): List<SystemPromptBlock> {
         val session = sessionManager.getOrCreate(conversationId)
@@ -1516,7 +1601,8 @@ class ChatService(
         nodeId: Uuid,
         selectIndex: Int
     ) {
-        if (blockIfBatchLocked(conversationId)) return
+        // 带上节点：批量锁只拦目标节点及之前的切换
+        if (blockIfBatchLocked(conversationId, nodeId)) return
         mutate(conversationId) { conversation ->
             val targetNode = conversation.messageNodes.firstOrNull { it.id == nodeId }
                 ?: throw NotFoundException("Message node not found")

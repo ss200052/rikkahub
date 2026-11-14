@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.batch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import me.rerere.ai.core.ReasoningLevel
+import me.rerere.ai.core.sum
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 
@@ -108,6 +109,13 @@ data class BatchRegenerationConfig(
      * 用来在不动全局配置的前提下对比「同一批换一个思考深度」的结果。
      */
     val reasoningLevelOverride: ReasoningLevel? = null,
+    /**
+     * 熄屏后是否继续跑。
+     *
+     * 关掉时靠前台服务保证切到别的 App 也能跑完；开启后会额外持有 CPU 唤醒锁，
+     * 屏幕关闭也能继续，代价是熄屏期间更耗电。
+     */
+    val keepAwakeWhileScreenOff: Boolean = false,
 ) {
     /** 有任意一组重 roll 词需要实时检测 */
     val hasRerollKeywords: Boolean
@@ -256,6 +264,61 @@ data class BatchSession(
         val updated = lanes.toMutableList().also { it[state.index] = state }
         return copy(lanes = updated, finished = updated.all { it.isInspectable })
     }
+}
+
+/**
+ * 续写模式：把「已被预填进去的那一段」和新生成的部分合成一条完整回复。
+ *
+ * 思考与正文分别拼接：前缀的思考在前、新思考在后，正文同理；
+ * 其它部件（图片、工具调用等）按原顺序留在前面。这样「查看」和「落盘」拿到的都是完整内容，
+ * 不需要各自记住前缀在哪。
+ */
+internal fun UIMessage.withContinuePrefix(prefix: UIMessage): UIMessage {
+
+    fun isReasoning(part: UIMessagePart) = part is UIMessagePart.Reasoning
+    fun isText(part: UIMessagePart) = part is UIMessagePart.Text
+
+    val prefixReasoning = prefix.parts.filter(::isReasoning)
+    val prefixRest = prefix.parts.filterNot { isReasoning(it) || isText(it) }
+    val prefixText = prefix.parts.filter(::isText)
+    val newReasoning = parts.filter(::isReasoning)
+    val newRest = parts.filterNot { isReasoning(it) || isText(it) }
+    val newText = parts.filter(::isText)
+
+    return copy(
+        parts = if (prefix.parts.isEmpty()) {
+            parts
+        } else {
+            prefixRest + (prefixReasoning + newReasoning) + (prefixText + newText) + newRest
+        },
+        // 输入沿用前缀那次（从用户消息起算的真实输入），输出累加：
+        // 按「一次性生成到当前内容」的等效口径记，避免把同一段上下文算两遍
+        usage = run {
+            val baseUsage = prefix.usage
+            val newUsage = usage
+            val prompt = baseUsage?.promptTokens ?: newUsage?.promptTokens ?: 0
+            val completion = (baseUsage?.completionTokens ?: 0) + (newUsage?.completionTokens ?: 0)
+            me.rerere.ai.core.TokenUsage(
+                promptTokens = prompt,
+                completionTokens = completion,
+                cachedTokens = baseUsage?.cachedTokens ?: newUsage?.cachedTokens ?: 0,
+                totalTokens = prompt + completion,
+            )
+        },
+        generationTimeMs = listOfNotNull(prefix.generationTimeMs, generationTimeMs).sum(),
+        // 续写不加步数：和「一次性写完」保持一致
+        stepCount = listOfNotNull(prefix.stepCount, stepCount).maxOrNull(),
+        // 快照型：lastUsage 是「最后一次请求」的上下文占用与缓存命中，续写后就是新的这次，
+        // 相加会把上下文占用算成两倍，所以只取最新
+        lastUsage = lastUsage ?: prefix.lastUsage,
+        // 这条消息本身从何时开始、到何时结束
+        createdAt = prefix.createdAt,
+        finishedAt = finishedAt ?: prefix.finishedAt,
+        // 引用标注取并集
+        annotations = (prefix.annotations + annotations).distinct(),
+        // 内容变了，原来的译文不再对应
+        translation = null,
+    )
 }
 
 /** 只取正文 */

@@ -78,6 +78,19 @@ object PromptSkeleton {
  *
  * 方案只碰槽位；固定结构与数据块由骨架决定，方案动不了，这也是两套方案必然同构的原因。
  */
+/**
+ * 用户自己另存的方案。
+ *
+ * 存的是**完整快照**：新建那一刻当前生效方案的全部槽位文字（含当时的界面改写），
+ * 之后改它不会影响内置两套，内置两套也不会影响它。
+ */
+@kotlinx.serialization.Serializable
+data class CustomPromptScheme(
+    val id: String,
+    val name: String,
+    val texts: Map<String, String>,
+)
+
 data class PromptScheme(
     val id: String,
     val texts: Map<String, String>,

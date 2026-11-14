@@ -125,6 +125,7 @@ fun ChatMessage(
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onBatchRegenerate: (() -> Unit)? = null,
+    onContinue: (() -> Unit)? = null,
 ) {
     val message = node.messages[node.selectIndex]
     if (message.isContextCheckpoint) {
@@ -241,6 +242,7 @@ fun ChatMessage(
                         showActionsSheet = true
                     },
                     onBatchRegenerate = onBatchRegenerate,
+                    onContinue = onContinue,
                     onTranslate = onTranslate,
                     onClearTranslation = onClearTranslation
                 )

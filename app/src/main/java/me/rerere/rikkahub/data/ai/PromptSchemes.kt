@@ -575,14 +575,31 @@ object PromptSchemes {
     }
 
     /** 按 id 取方案；未知 id 一律回到英文方案 */
-    fun of(id: String): PromptScheme = if (id == CHINESE.id) CHINESE else ENGLISH
+    /**
+     * 用户另存的方案表。
+     *
+     * 所有组装都会经过 createContext，在那里装一次；方案查找是纯函数、拿不到设置，
+     * 所以走这个进程内登记表。批量并发的每一路都用同一份设置，值一致。
+     */
+    @Volatile
+    private var customSchemes: List<CustomPromptScheme> = emptyList()
 
-    /** 全部内置方案，界面上列为默认选项 */
-    val all: List<PromptScheme> get() = listOf(ENGLISH, CHINESE)
+    fun installCustom(list: List<CustomPromptScheme>) {
+        customSchemes = list
+    }
+
+    fun of(id: String): PromptScheme =
+        customSchemes.firstOrNull { it.id == id }?.let { PromptScheme(id = it.id, texts = it.texts) }
+            ?: if (id == CHINESE.id) CHINESE else ENGLISH
+
+    /** 全部可选方案：内置两套 + 用户另存的 */
+    val all: List<PromptScheme>
+        get() = listOf(ENGLISH, CHINESE) + customSchemes.map { PromptScheme(id = it.id, texts = it.texts) }
 
     /** 方案在界面上的名字 */
     fun displayName(scheme: PromptScheme): String = when (scheme.id) {
         CHINESE.id -> "中文方案"
-        else -> "English 方案"
+        ENGLISH.id -> "English 方案"
+        else -> customSchemes.firstOrNull { it.id == scheme.id }?.name ?: scheme.id
     }
 }

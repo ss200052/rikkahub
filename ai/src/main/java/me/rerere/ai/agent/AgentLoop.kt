@@ -7,6 +7,7 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.core.sum
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.StreamChunkHandler
@@ -35,11 +36,20 @@ internal class AgentLoop(
     // 本轮的助手消息；新的一轮在第一次请求模型时才创建
     private var message: UIMessage?
 
+    /**
+     * 接着一条已有回复往下写时，第一步只是在延续那条消息，不算新增一次请求。
+     *
+     * 这样「打断后继续生成」的步数和「一次写完」保持一致；
+     * 之后的步骤（工具调用重来一轮）照常计步。
+     */
+    private var firstStepContinuesExisting = false
+
     init {
         val last = request.messages.lastOrNull()
         if (last?.role == MessageRole.ASSISTANT) {
             history = request.messages.dropLast(1)
             message = last
+            firstStepContinuesExisting = true
         } else {
             history = request.messages
             message = null
@@ -90,10 +100,13 @@ internal class AgentLoop(
             parts = emptyList(),
             modelId = params.model.id,
         )
+        // 紧接着续写的第一步不额外计步，之后恢复正常
+        val countStep = !firstStepContinuesExisting
+        firstStepContinuesExisting = false
         val generated = if (request.stream) {
-            stream(step.messages, params, base)
+            stream(step.messages, params, base, countStep)
         } else {
-            generate(step.messages, params, base)
+            generate(step.messages, params, base, countStep)
         }
         update(hooks.finishStep(generated, newPartsFrom = base.parts.size).copy(finishedAt = now()))
     }
@@ -102,6 +115,7 @@ internal class AgentLoop(
         messages: List<UIMessage>,
         params: TextGenerationParams,
         base: UIMessage,
+        countStep: Boolean = true,
     ): UIMessage {
         // 多轮工具调用共用同一条助手消息，消息上已有的 usage 和耗时来自之前的步骤。
         // 本步从清空的统计开始（merge 只适合同一次请求内的快照），再与之前的步骤累加。
@@ -117,7 +131,7 @@ internal class AgentLoop(
                     try {
                         val mark = firstChunk ?: TimeSource.Monotonic.markNow().also { firstChunk = it }
                         attempt = handler.handle(listOf(attempt), chunk).single()
-                        preview(attempt.withStepStats(base, mark.elapsedNow()), newPartsFrom = base.parts.size)
+                        preview(attempt.withStepStats(base, mark.elapsedNow(), countStep), newPartsFrom = base.parts.size)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -125,7 +139,7 @@ internal class AgentLoop(
                         throw StreamChunkHandlingException(e)
                     }
                 }
-                attempt.withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO)
+                attempt.withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO, countStep)
             }
         } catch (e: StreamChunkHandlingException) {
             throw e.cause
@@ -136,6 +150,7 @@ internal class AgentLoop(
         messages: List<UIMessage>,
         params: TextGenerationParams,
         base: UIMessage,
+        countStep: Boolean = true,
     ): UIMessage {
         // 非流式拿不到首 token 时间，只能统计最后一次尝试的整个请求耗时
         var requestMark = TimeSource.Monotonic.markNow()
@@ -151,7 +166,7 @@ internal class AgentLoop(
             annotations = result.message.annotations.ifEmpty { base.annotations },
             modelId = params.model.id,
             usage = result.usage,
-        ).finishReasoning().withStepStats(base, requestTime)
+        ).finishReasoning().withStepStats(base, requestTime, countStep)
         preview(generated, newPartsFrom = base.parts.size)
         return generated
     }
@@ -225,12 +240,28 @@ private fun errorOutput(error: String): List<UIMessagePart> =
     listOf(UIMessagePart.Text(buildJsonObject { put("error", error) }.toString()))
 
 // 把本步的 usage 和生成耗时累加到之前步骤的统计上；接收者只带本步的 usage
-private fun UIMessage.withStepStats(stepBase: UIMessage, stepTime: Duration): UIMessage = copy(
-    usage = stepBase.usage.sum(usage),
+private fun UIMessage.withStepStats(stepBase: UIMessage, stepTime: Duration, countStep: Boolean = true): UIMessage = copy(
+    usage = if (countStep) {
+        stepBase.usage.sum(usage)
+    } else {
+        // 续写：输入沿用基座那次（也就是从用户消息起算的真实输入），输出累加。
+        // 续写请求的输入里含已有正文，累加会把同一段上下文算两遍，
+        // 这里按「一次性生成到当前内容」的等效口径记。
+        val baseUsage = stepBase.usage
+        val stepUsage = usage
+        val prompt = baseUsage?.promptTokens ?: stepUsage?.promptTokens ?: 0
+        val completion = (baseUsage?.completionTokens ?: 0) + (stepUsage?.completionTokens ?: 0)
+        TokenUsage(
+            promptTokens = prompt,
+            completionTokens = completion,
+            cachedTokens = baseUsage?.cachedTokens ?: stepUsage?.cachedTokens ?: 0,
+            totalTokens = prompt + completion,
+        )
+    },
     generationTimeMs = (stepBase.generationTimeMs ?: 0L) + stepTime.inWholeMilliseconds,
     // 上下文占用只看最后一次请求，usage 是多步累计值；本步没返回 usage 时沿用之前步骤的
     lastUsage = usage ?: stepBase.lastUsage,
-    stepCount = (stepBase.stepCount ?: 0) + 1,
+    stepCount = if (countStep) (stepBase.stepCount ?: 0) + 1 else (stepBase.stepCount ?: 0),
 )
 
 private fun now() = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())

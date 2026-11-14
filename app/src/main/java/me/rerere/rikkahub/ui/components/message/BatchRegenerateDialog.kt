@@ -1,9 +1,13 @@
 package me.rerere.rikkahub.ui.components.message
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -90,6 +94,7 @@ fun BatchRegenerateDialog(
     var rerollOnNoHit by remember { mutableStateOf(initial.rerollOnNoHit) }
     var commitScope by remember { mutableStateOf(initial.commitScope) }
     var reasoningOverride by remember { mutableStateOf(initial.reasoningLevelOverride) }
+    var keepAwake by remember { mutableStateOf(initial.keepAwakeWhileScreenOff) }
 
     fun currentConfig(): BatchRegenerationConfig = initial.copy(
         parallelCount = parallel,
@@ -100,6 +105,7 @@ fun BatchRegenerateDialog(
         rerollOnNoHit = rerollOnNoHit,
         commitScope = commitScope,
         reasoningLevelOverride = reasoningOverride,
+        keepAwakeWhileScreenOff = keepAwake,
     )
 
     // 改动即落库。连续改动（拖并发滑杆、连打字）靠 delay 去抖，停下后只写一次
@@ -112,6 +118,7 @@ fun BatchRegenerateDialog(
         rerollOnNoHit,
         commitScope,
         reasoningOverride,
+        keepAwake,
     ) {
         delay(300)
         onConfigChange(currentConfig())
@@ -132,6 +139,49 @@ fun BatchRegenerateDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                // ---- 当前启用的关键词汇总（跨三组，一眼看全）----
+                val enabledSummary = buildList {
+                    if (commitKeywords.isNotEmpty()) {
+                        add("落盘词：" + commitKeywords.joinToString("、"))
+                    }
+                    if (reasoningKeywords.isNotEmpty()) {
+                        add("重 roll·思考：" + reasoningKeywords.joinToString("、"))
+                    }
+                    if (textKeywords.isNotEmpty()) {
+                        add("重 roll·正文：" + textKeywords.joinToString("、"))
+                    }
+                }
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = "当前启用的关键词",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        if (enabledSummary.isEmpty()) {
+                            Text(
+                                text = "一个都没启用：这一批不会按关键词重 roll，也不会标记命中",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            enabledSummary.forEach { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // ---- 并行路数 ----
                 Column {
                     Text(
@@ -253,6 +303,29 @@ fun BatchRegenerateDialog(
                     )
                 }
 
+                // 熄屏是否继续跑：关掉时切到别的 App 仍会跑完，只是熄屏后会暂停
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "熄屏后继续跑",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = if (keepAwake) {
+                                "熄灭屏幕也会跑完，期间更耗电。"
+                            } else {
+                                "默认只在应用切到后台时继续；熄屏后会暂停，亮屏继续。"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = keepAwake,
+                        onCheckedChange = { keepAwake = it },
+                    )
+                }
+
                 HorizontalDivider()
 
                 // ---- 成本提示 ----
@@ -305,30 +378,46 @@ private fun KeywordEditor(
     var draft by remember { mutableStateOf("") }
     var newGroupName by remember { mutableStateOf("") }
     var showNewGroup by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
 
     val groups = remember(presets, category) {
         presets.filter { it.category == category }.map { it.group }.distinct()
     }
     var selectedGroup by remember(category) { mutableStateOf(groups.firstOrNull().orEmpty()) }
-    // 分组可能被删空，选中的 tab 要跟着回退
+    // 分组被删空时选中的 tab 要跟着回退
     val activeGroup = if (selectedGroup in groups) selectedGroup else groups.firstOrNull().orEmpty()
-    val groupKeywords = presets
+    val activeKeywords = presets
         .filter { it.category == category && it.group == activeGroup }
         .map { it.keyword }
 
-    fun addKeyword(value: String) {
-        val text = value.trim()
-        if (text.isNotEmpty()) onChange((keywords + text).distinct())
+    // 开关：点一下就是「这次用它 / 这次不用它」
+    fun toggle(keyword: String) {
+        onChange(if (keyword in keywords) keywords - keyword else (keywords + keyword).distinct())
     }
 
-    fun storeInto(group: String) {
-        if (keywords.isEmpty()) return
-        val existing = presets.map { Triple(it.category, it.group, it.keyword) }.toSet()
-        val additions = keywords
-            .filter { Triple(category, group, it) !in existing }
-            .map { BatchKeywordPreset(category = category, group = group, keyword = it) }
-        if (additions.isNotEmpty()) onPresetsChange(presets + additions)
+    // 新词直接进当前库，并立刻标记为本次使用
+    fun addAndStore(value: String) {
+        val text = value.trim()
+        if (text.isEmpty()) return
+        val group = activeGroup
+        if (text !in keywords) onChange((keywords + text).distinct())
+        val exists = presets.any { it.category == category && it.group == group && it.keyword == text }
+        if (!exists) {
+            onPresetsChange(
+                presets + BatchKeywordPreset(category = category, group = group, keyword = text),
+            )
+        }
         selectedGroup = group
+    }
+
+    // 长按确认后从库里彻底删掉，顺带从本次使用里摘掉
+    fun removeFromLibrary(keyword: String) {
+        onPresetsChange(
+            presets.filterNot {
+                it.category == category && it.group == activeGroup && it.keyword == keyword
+            },
+        )
+        if (keyword in keywords) onChange(keywords - keyword)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -339,44 +428,26 @@ private fun KeywordEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        // 本次生效：库里的开关汇总在这里，点一下取消
         if (keywords.isNotEmpty()) {
+            Text(
+                text = "本次生效 ${keywords.size} 个（点一下取消）",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 keywords.forEach { keyword ->
                     FilterChip(
                         selected = true,
-                        onClick = { onChange(keywords - keyword) },
+                        onClick = { toggle(keyword) },
                         label = { Text(keyword) },
                     )
                 }
             }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                singleLine = true,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 4.dp),
-                placeholder = { Text("输入关键词", style = MaterialTheme.typography.bodySmall) },
-            )
-            TextButton(
-                enabled = draft.isNotBlank(),
-                onClick = {
-                    addKeyword(draft)
-                    draft = ""
-                },
-            ) { Text("添加") }
-        }
-
-        // ---- 关键词库：分类内的自定义 tab ----
+        // 词库：一个库一个 tab，选中哪个就显示哪个库里的词
         if (groups.isNotEmpty()) {
-            Text(
-                text = "关键词库：点下面的词加入上面这组，点 ✕ 从库里删掉（改库会立即保存）",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -385,70 +456,59 @@ private fun KeywordEditor(
                     FilterChip(
                         selected = group == activeGroup,
                         onClick = { selectedGroup = group },
-                        label = {
-                            Text(group.ifBlank { BatchKeywordPreset.DEFAULT_GROUP_LABEL })
-                        },
+                        label = { Text(group.ifBlank { BatchKeywordPreset.DEFAULT_GROUP_LABEL }) },
                     )
                 }
+                TextButton(
+                    onClick = { showNewGroup = !showNewGroup },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(28.dp),
+                ) { Text("＋新库", style = MaterialTheme.typography.labelMedium) }
             }
-            // 词与删除按钮是并列的两个可点区：点词=加入，点 ✕=从库里删。
-            // 不把 ✕ 塞进 chip 内部，避免和 chip 自己的点击抢事件。
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                groupKeywords.forEach { keyword ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+
+            if (activeKeywords.isEmpty()) {
+                Text(
+                    text = "这个库还是空的，在下面的输入框加一个就会进来。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    text = "点词＝开关；长按＝从库里删掉",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    activeKeywords.forEach { keyword ->
+                        val on = keyword in keywords
                         Surface(
                             shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.clickable { addKeyword(keyword) },
+                            color = if (on) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            modifier = Modifier.combinedClickable(
+                                onClick = { toggle(keyword) },
+                                onLongClick = { pendingDelete = keyword },
+                            ),
                         ) {
                             Text(
-                                text = keyword,
+                                text = if (on) "✓ $keyword" else "   $keyword",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = if (on) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             )
                         }
-                        Text(
-                            text = "✕",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clickable {
-                                    onPresetsChange(
-                                        presets.filterNot {
-                                            it.category == category &&
-                                                it.group == activeGroup &&
-                                                it.keyword == keyword
-                                        },
-                                    )
-                                }
-                                .padding(horizontal = 6.dp, vertical = 4.dp),
-                        )
                     }
                 }
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(
-                enabled = keywords.isNotEmpty(),
-                onClick = { storeInto(activeGroup) },
-            ) {
-                Text(
-                    text = if (groups.isEmpty()) "存进库" else "存进当前分组",
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-            TextButton(
-                enabled = keywords.isNotEmpty(),
-                onClick = { showNewGroup = !showNewGroup },
-            ) { Text("存为新分组", style = MaterialTheme.typography.labelMedium) }
-            // 只有确实选中了某个现有分组时才给删组入口，
-            // 避免选中的组被删空后回退到第一个组、误删别的组
-            if (selectedGroup.isNotBlank() && selectedGroup in groups) {
                 TextButton(
                     onClick = {
                         onPresetsChange(
@@ -457,8 +517,34 @@ private fun KeywordEditor(
                             },
                         )
                     },
-                ) { Text("删掉本组", style = MaterialTheme.typography.labelMedium) }
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text(
+                        text = "删掉「${activeGroup.ifBlank { BatchKeywordPreset.DEFAULT_GROUP_LABEL }}」这个库",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
+        }
+
+        // 新增词：进当前库并自动开启
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 4.dp),
+                placeholder = { Text("新增一个词", style = MaterialTheme.typography.bodySmall) },
+            )
+            TextButton(
+                enabled = draft.isNotBlank(),
+                onClick = {
+                    addAndStore(draft)
+                    draft = ""
+                },
+            ) { Text("添加") }
         }
 
         if (showNewGroup) {
@@ -467,21 +553,52 @@ private fun KeywordEditor(
                     value = newGroupName,
                     onValueChange = { newGroupName = it },
                     singleLine = true,
-                    label = { Text("新分组名") },
+                    label = { Text("新库名") },
                     modifier = Modifier
                         .weight(1f)
                         .padding(end = 4.dp),
                 )
                 TextButton(
-                    enabled = newGroupName.isNotBlank() && keywords.isNotEmpty(),
+                    enabled = newGroupName.isNotBlank(),
                     onClick = {
                         val name = newGroupName.trim()
-                        storeInto(name)
+                        val exists = presets.any { it.category == category && it.group == name }
+                        if (!exists) {
+                            // 一个库靠它里面的词存在，先放一个词进去，随后可以删掉
+                            onPresetsChange(
+                                presets + BatchKeywordPreset(
+                                    category = category,
+                                    group = name,
+                                    keyword = name,
+                                ),
+                            )
+                        }
+                        selectedGroup = name
                         newGroupName = ""
                         showNewGroup = false
                     },
                 ) { Text("确定") }
             }
         }
+    }
+
+    // 长按删除要二次确认：库是持久数据，误删不划算
+    pendingDelete?.let { keyword ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("从库里删除") },
+            text = { Text("把「$keyword」从当前库里删掉？本次使用也会一并取消。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        removeFromLibrary(keyword)
+                        pendingDelete = null
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+            },
+        )
     }
 }

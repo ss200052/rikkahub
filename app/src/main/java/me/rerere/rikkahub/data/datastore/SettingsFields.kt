@@ -187,6 +187,7 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         json(SYSTEM_PROMPT_OVERRIDES, Settings::systemPromptOverrides) { copy(systemPromptOverrides = it) },
         json(SYSTEM_PROMPT_PRESETS, Settings::systemPromptPresets) { copy(systemPromptPresets = it) },
         plain(PROMPT_SCHEME_ID, Settings::promptSchemeId) { copy(promptSchemeId = it) },
+        json(CUSTOM_PROMPT_SCHEMES, Settings::customPromptSchemes) { copy(customPromptSchemes = it) },
     )
 }
 

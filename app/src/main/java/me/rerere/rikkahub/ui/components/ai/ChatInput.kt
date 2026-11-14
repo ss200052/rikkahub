@@ -134,6 +134,8 @@ fun ChatInput(
     onMoreClick: () -> Unit,
     onCancelClick: () -> Unit,
     onSendClick: () -> Unit,
+    /** 输入为空也允许点发送——此时由调用方解释成「继续生成」 */
+    allowEmptySend: Boolean = false,
     onLongSendClick: () -> Unit,
     messageQueue: MessageQueueState = MessageQueueState(),
     onRemoveQueuedMessage: (Uuid) -> Unit = {},
@@ -371,6 +373,7 @@ fun ChatInput(
                             SendButton(
                                 loading = loading,
                                 empty = state.isEmpty(),
+                                allowEmpty = allowEmptySend,
                                 onClick = { sendMessage() },
                                 onLongClick = { sendMessageWithoutAnswer() },
                             )
@@ -395,16 +398,19 @@ private fun SendButton(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    allowEmpty: Boolean = false,
 ) {
     val showStop = loading && empty
+    // 空内容但允许续写时，按钮按可用状态显示，别让人以为点不动
+    val actionable = !empty || allowEmpty
     val containerColor = when {
         showStop -> MaterialTheme.colorScheme.errorContainer
-        empty -> MaterialTheme.colorScheme.surfaceContainerHigh
+        !actionable -> MaterialTheme.colorScheme.surfaceContainerHigh
         else -> MaterialTheme.colorScheme.primary
     }
     val contentColor = when {
         showStop -> MaterialTheme.colorScheme.onErrorContainer
-        empty -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        !actionable -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         else -> MaterialTheme.colorScheme.onPrimary
     }
     Box(
@@ -414,7 +420,7 @@ private fun SendButton(
             .testTag("chat_send_button")
             .clip(CircleShape)
             .combinedClickable(
-                enabled = showStop || !empty,
+                enabled = showStop || actionable,
                 onClick = onClick,
                 onLongClick = onLongClick,
             )

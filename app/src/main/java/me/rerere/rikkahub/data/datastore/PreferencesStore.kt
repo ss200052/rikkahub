@@ -195,6 +195,7 @@ class SettingsStore internal constructor(
         val SYSTEM_PROMPT_OVERRIDES = stringPreferencesKey("system_prompt_overrides")
         val SYSTEM_PROMPT_PRESETS = stringPreferencesKey("system_prompt_presets")
         val PROMPT_SCHEME_ID = stringPreferencesKey("prompt_scheme_id")
+        val CUSTOM_PROMPT_SCHEMES = stringPreferencesKey("custom_prompt_schemes")
 
         // Uses the same DataStore singleton without starting settings flows or requiring Koin.
         internal suspend fun restoreBeforeInitialization(context: Context, settings: Settings, launchCount: Int) {

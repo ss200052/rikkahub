@@ -6,6 +6,7 @@ import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.hugeicons.stroke.ArrowDownDouble
 import me.rerere.hugeicons.stroke.ArrowUpDouble
+import me.rerere.hugeicons.stroke.Layers01
 import me.rerere.hugeicons.stroke.CursorPointer01
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Cancel01
@@ -131,6 +132,7 @@ fun ChatList(
     onClearAllErrors: () -> Unit = {},
     onRegenerate: (UIMessage) -> Unit = {},
     onBatchRegenerate: (UIMessage) -> Unit = {},
+    onContinue: (UIMessage) -> Unit = {},
     onEdit: (UIMessage) -> Unit = {},
     onForkMessage: (UIMessage) -> Unit = {},
     onDelete: (UIMessage) -> Unit = {},
@@ -143,6 +145,9 @@ fun ChatList(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    /** 有批量任务时，跳转列里多给一个「跳到目标消息」的入口 */
+    showBatchJump: Boolean = false,
+    onJumpToBatchTarget: () -> Unit = {},
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -174,6 +179,7 @@ fun ChatList(
                 onClearAllErrors = onClearAllErrors,
                 onRegenerate = onRegenerate,
                 onBatchRegenerate = onBatchRegenerate,
+                onContinue = onContinue,
                 onEdit = onEdit,
                 onForkMessage = onForkMessage,
                 onDelete = onDelete,
@@ -186,6 +192,8 @@ fun ChatList(
                 onToolAnswer = onToolAnswer,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
+                showBatchJump = showBatchJump,
+                onJumpToBatchTarget = onJumpToBatchTarget,
             )
         }
     }
@@ -224,6 +232,7 @@ private fun ChatListNormal(
     onClearAllErrors: () -> Unit,
     onRegenerate: (UIMessage) -> Unit,
     onBatchRegenerate: (UIMessage) -> Unit,
+    onContinue: (UIMessage) -> Unit,
     onEdit: (UIMessage) -> Unit,
     onForkMessage: (UIMessage) -> Unit,
     onDelete: (UIMessage) -> Unit,
@@ -236,6 +245,8 @@ private fun ChatListNormal(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    showBatchJump: Boolean = false,
+    onJumpToBatchTarget: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
@@ -371,6 +382,14 @@ private fun ChatListNormal(
                             },
                             onBatchRegenerate = {
                                 onBatchRegenerate(node.currentMessage)
+                            },
+                            // 续写只对最后一条助手消息有意义
+                            onContinue = if (index == conversation.messageNodes.lastIndex &&
+                                node.currentMessage.role == me.rerere.ai.core.MessageRole.ASSISTANT
+                            ) {
+                                { onContinue(node.currentMessage) }
+                            } else {
+                                null
                             },
                             onEdit = {
                                 onEdit(node.currentMessage)
@@ -548,7 +567,9 @@ private fun ChatListNormal(
                 show = isRecentScroll && !state.isScrollInProgress && settings.displaySetting.showMessageJumper && !captureProgress,
                 onLeft = settings.displaySetting.messageJumperOnLeft,
                 scope = scope,
-                state = state
+                state = state,
+                showBatchJump = showBatchJump,
+                onJumpToBatchTarget = onJumpToBatchTarget,
             )
 
             // Suggestion
@@ -785,7 +806,9 @@ private fun BoxScope.MessageJumper(
     show: Boolean,
     onLeft: Boolean,
     scope: CoroutineScope,
-    state: LazyListState
+    state: LazyListState,
+    showBatchJump: Boolean,
+    onJumpToBatchTarget: () -> Unit,
 ) {
     AnimatedVisibility(
         visible = show,
@@ -801,6 +824,21 @@ private fun BoxScope.MessageJumper(
             modifier = Modifier.padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // 批量任务存在时才出现：点了会二次确认，再跳到发起那一轮
+            if (showBatchJump) {
+                Surface(
+                    onClick = onJumpToBatchTarget,
+                    shape = CircleShape,
+                    tonalElevation = 4.dp,
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
+                ) {
+                    Icon(
+                        imageVector = HugeIcons.Layers01,
+                        contentDescription = "跳到批量任务的目标消息",
+                        modifier = Modifier.padding(4.dp),
+                    )
+                }
+            }
             Surface(
                 onClick = {
                     scope.launch {

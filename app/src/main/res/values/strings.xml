@@ -428,6 +428,9 @@
   <string name="notification_live_update_chip_writing">Writing</string>
   <string name="notification_live_update_thinking">Thinking...</string>
   <string name="notification_live_update_title">Generating response...</string>
+  <string name="notification_batch_progress_title">Batch running · %1$d/%2$d lanes done</string>
+  <string name="notification_batch_progress_text">%1$d hit · %2$d rerolls</string>
+  <string name="notification_batch_progress_waiting">Preparing batch...</string>
   <string name="notification_live_update_tool">Running tool: %s</string>
   <string name="notification_live_update_writing">Writing response...</string>
   <string name="notification_web_server_running">Web Server Running</string>

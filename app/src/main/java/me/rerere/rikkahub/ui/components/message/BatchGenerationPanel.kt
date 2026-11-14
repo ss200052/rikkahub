@@ -1,14 +1,20 @@
 package me.rerere.rikkahub.ui.components.message
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -20,6 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -31,18 +38,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import me.rerere.ai.core.ReasoningLevel
+import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.BatchSession
 import me.rerere.rikkahub.data.batch.CommitTarget
 import me.rerere.rikkahub.data.batch.KeywordSource
 import me.rerere.rikkahub.data.batch.LaneCommitRecord
+import me.rerere.rikkahub.data.batch.KeywordScope
 import me.rerere.rikkahub.data.batch.LaneState
+import me.rerere.rikkahub.ui.components.ai.ProviderQuotaText
+import me.rerere.rikkahub.ui.components.ai.rememberProviderQuota
 import me.rerere.rikkahub.data.batch.isComplete
 import me.rerere.rikkahub.data.batch.isInspectable
+
+/** 每格固定高度：内容多少都不改变卡片大小 */
+private val TILE_HEIGHT = 84.dp
 
 /**
  * 批量生成工作台：每一路一个格子。
@@ -67,8 +85,19 @@ fun BatchGenerationPanel(
     ownerNotice: String? = null,
     /** 跨对话时提供的「回到所属对话」动作；为 null 则不显示入口 */
     onGoToOwner: (() -> Unit)? = null,
+    /** 运行中临时插一路，返回 false 表示插不进去（已到上限或批次结束） */
+    onAddLane: () -> Boolean = { false },
+    /** 运行中调整轮次上限；只改这一个值，请求体不动 */
+    onUpdateMaxRerolls: (Int) -> Unit = {},
+    /** 当前对话用的提供商；支持查余额时会在顶部显示剩余额度 */
+    quotaProvider: me.rerere.ai.provider.ProviderSetting? = null,
+    /** 本批已经花掉的金额；null 表示还没统计出来 */
+    batchSpent: java.math.BigDecimal? = null,
+    /** 运行中切换「熄屏也跑」 */
+    onToggleKeepAwake: (Boolean) -> Unit = {},
 ) {
     var confirmUnlock by remember { mutableStateOf(false) }
+    var showRunningSettings by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -76,7 +105,7 @@ fun BatchGenerationPanel(
             tonalElevation = 6.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("批量重新生成", style = MaterialTheme.typography.titleMedium)
@@ -122,32 +151,85 @@ fun BatchGenerationPanel(
                     }
                 }
 
-                // 后台命中提醒：只在 App 不在前台时推送
+                // 额度：只在提供商支持查询时显示，查不到就静默不占位
+                if (quotaProvider != null) {
+                    val quotaResult = rememberProviderQuota(quotaProvider)
+                    val quota = quotaResult?.getOrNull()
+                    if (quota != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "余额",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                            ProviderQuotaText(
+                                providerSetting = quotaProvider,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            batchSpent?.let { spent ->
+                                Text(
+                                    text = "· 本次已用 ${spent.stripTrailingZeros().toPlainString()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 运行中才出现的两个操作：看当前设置、临时加一路
+                if (!session.finished) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(onClick = { showRunningSettings = true }) { Text("当前设置") }
+                        OutlinedButton(
+                            onClick = { onAddLane() },
+                            enabled = session.lanes.size < BatchRegenerationConfig.MAX_PARALLEL,
+                        ) { Text("增加路数") }
+                        Text(
+                            text = "共 ${session.lanes.size} 路（上限 ${BatchRegenerationConfig.MAX_PARALLEL}）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                // 两个开关排一行，缩小以省纵向空间
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = "后台命中时推送通知",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Switch(
+                    TogglePair(
+                        label = "命中通知",
                         checked = notifyOnHit,
                         onCheckedChange = onToggleNotify,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TogglePair(
+                        label = "熄屏继续",
+                        checked = session.config.keepAwakeWhileScreenOff,
+                        onCheckedChange = onToggleKeepAwake,
+                        modifier = Modifier.weight(1f),
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                 // 一行固定两个格子，宽度随屏幕自适应
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -156,7 +238,7 @@ fun BatchGenerationPanel(
                     items(session.lanes, key = { it.index }) { lane ->
                         LaneTile(
                             state = lane,
-                            commits = session.commits.filter { it.laneIndex == lane.index },
+                            rerollLimit = session.config.maxRerollsPerLane,
                             onStop = { onStopLane(lane.index) },
                             onInspect = { onInspect(lane.index) },
                             onCommit = { onCommit(lane.index) },
@@ -165,7 +247,7 @@ fun BatchGenerationPanel(
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -191,6 +273,17 @@ fun BatchGenerationPanel(
                 }
             }
         }
+    }
+
+    if (showRunningSettings) {
+        RunningSettingsDialog(
+            session = session,
+            onDismiss = { showRunningSettings = false },
+            onConfirm = { limit ->
+                showRunningSettings = false
+                onUpdateMaxRerolls(limit)
+            },
+        )
     }
 
     // 解锁会清空格子，先确认一次
@@ -238,13 +331,20 @@ private fun summaryItems(session: BatchSession): List<String> = buildList {
     add("命中 ${session.hitCount}")
     if (session.totalHits > 0) add("累计命中 ${session.totalHits} 次")
     add("重 roll ${session.totalRerolls} 次")
-    if (session.commits.isNotEmpty()) add("已落盘 ${session.commits.size}")
+    // 落盘统计统一放这里，卡片上不再各自重复
+    if (session.commits.isNotEmpty()) {
+        val byTarget = session.commits.groupingBy { it.target }.eachCount()
+        CommitTarget.entries.forEach { target ->
+            val count = byTarget[target] ?: return@forEach
+            add("落盘·${target.shortLabel()} $count")
+        }
+    }
 }
 
 @Composable
 private fun LaneTile(
     state: LaneState,
-    commits: List<LaneCommitRecord>,
+    rerollLimit: Int,
     onStop: () -> Unit,
     onInspect: () -> Unit,
     onCommit: () -> Unit,
@@ -257,71 +357,74 @@ private fun LaneTile(
     val secondary = LocalContentColor.current.copy(alpha = 0.72f)
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        // 每格高度写死：状态、明细、动作三块位置固定，不会因为文字长短上下跳
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(TILE_HEIGHT),
         colors = state.tileColors(),
         onClick = { if (inspectable) onInspect() },
         enabled = inspectable,
     ) {
-        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "路 ${state.index + 1}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = accent,
-                )
-            }
-
-            Text(
-                text = state.statusLabel(),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-
-            state.detailLabel()?.let { detail ->
-                // 重 roll 次数异常多时标红，提醒关键词可能配得太严
-                val tooManyRerolls = state is LaneState.Running && state.rerollCount >= 10
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (tooManyRerolls) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        secondary
-                    },
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            if (commits.isNotEmpty()) {
-                Text(
-                    text = "已落盘 ${commits.size} 处" + commits.joinToString("") { " · " + it.target.shortLabel() },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = accent,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            // 三个动作放在一行里尽量紧凑，放不下就自动换行
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(0.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-                itemVerticalAlignment = Alignment.CenterVertically,
+        Box {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
             ) {
-                if (state is LaneState.Running) {
-                    CompactAction("停止", onStop)
+                // 文字区占满动作行以上的空间：写不下就自然裁掉，不显示省略号
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clipToBounds(),
+                ) {
+                    // 状态是第一行；右侧留出角标的位置，免得被压住
+                    Text(
+                        text = state.statusLabel(),
+                        style = MaterialTheme.typography.bodySmall,
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier.padding(end = 28.dp),
+                    )
+
+                    state.detailLabel(rerollLimit)?.let { detail ->
+                        Text(
+                            text = detail,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = secondary,
+                            overflow = TextOverflow.Clip,
+                        )
+                    }
                 }
-                if (state !is LaneState.Running && state !is LaneState.Idle) {
-                    // 任何终态都能重跑：失败、截断、或者对结果不满意
-                    CompactAction("重跑", { confirmRerun = true })
-                }
-                if (inspectable) {
-                    CompactAction("查看", onInspect)
-                    CompactAction("落盘", onCommit)
+
+                // 动作固定一行，等宽均分，不再折行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (state is LaneState.Running) {
+                        CompactAction("停止", onStop, Modifier.weight(1f))
+                    }
+                    if (state !is LaneState.Running && state !is LaneState.Idle) {
+                        // 任何终态都能重跑：失败、截断、或者对结果不满意
+                        CompactAction("重跑", { confirmRerun = true }, Modifier.weight(1f))
+                    }
+                    if (inspectable) {
+                        CompactAction("查看", onInspect, Modifier.weight(1f))
+                        CompactAction("落盘", onCommit, Modifier.weight(1f))
+                    }
                 }
             }
+
+            // 路号做成右上角角标：单独一行会白占一行高度
+            Text(
+                text = "路 ${state.index + 1}",
+                style = MaterialTheme.typography.labelSmall,
+                color = accent,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 8.dp),
+            )
         }
     }
 
@@ -331,13 +434,7 @@ private fun LaneTile(
             onDismissRequest = { confirmRerun = false },
             title = { Text("重跑 路 ${state.index + 1}") },
             text = {
-                Text(
-                    if (commits.isEmpty()) {
-                        "这一路当前的内容会被丢弃，重新生成一次。"
-                    } else {
-                        "这一路当前的内容会被丢弃，重新生成一次。已经落盘到对话里的内容不受影响。"
-                    },
-                )
+                Text("这一路当前的内容会被丢弃，重新生成一次。已经落盘到对话里的内容不受影响。")
             },
             confirmButton = {
                 TextButton(
@@ -356,11 +453,11 @@ private fun LaneTile(
 
 /** 紧凑的小按钮：去掉默认的大内边距，字也小一号 */
 @Composable
-private fun CompactAction(text: String, onClick: () -> Unit) {
+private fun CompactAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     TextButton(
         onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
-        modifier = Modifier.height(26.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+        modifier = modifier.height(24.dp),
     ) {
         Text(
             text = text,
@@ -382,21 +479,19 @@ private fun LaneState.statusLabel(): String = when (this) {
     is LaneState.Cancelled -> "已停止"
 }
 
-private fun LaneState.detailLabel(): String? = when (this) {
+private fun LaneState.detailLabel(rerollLimit: Int): String? = when (this) {
+    // 轮次只写「已用/上限」，不再铺一句「已重 roll N 次」
     is LaneState.Running -> buildString {
-        if (rerollCount > 0) append("已重 roll $rerollCount 次")
+        append(if (rerollLimit > 0) "重roll $rerollCount/$rerollLimit" else "重roll $rerollCount/不限")
         lastHit?.let {
-            if (isNotEmpty()) append(" · ")
-            append("命中${if (it.source == KeywordSource.REASONING) "思考" else "正文"}：${it.keyword}")
+            append(" · 命中${if (it.source == KeywordSource.REASONING) "思考" else "正文"}：${it.keyword}")
         }
-        if (waitingSeconds != null) {
-            if (isNotEmpty()) append(" · ")
-            append("服务端限流，${waitingSeconds} 秒后自动重试")
-        }
-    }.ifEmpty { null }
+        if (waitingSeconds != null) append(" · 限流等待 $waitingSeconds 秒")
+    }
 
     is LaneState.Truncated -> buildString {
-        append("共 $attempt 轮均被截断")
+        // 被截断这一路没有独立的重 roll 计数，用总轮次表达同一个意思
+        append(if (rerollLimit > 0) "轮次 $attempt≥$rerollLimit" else "轮次 $attempt")
         lastHit?.let { append(" · 最后命中${if (it.source == KeywordSource.REASONING) "思考" else "正文"}：${it.keyword}") }
     }
 
@@ -417,38 +512,191 @@ private fun LaneState.resultOrNull() = when (this) {
     else -> null
 }
 
-/** 卡片底色按状态区分：命中用主题色底，失败用错误色底，其余保持中性 */
+// 三档状态用固定色相：命中绿、轮次用尽黄、仍在跑浅红。深浅模式各一套，保证对比度
+private val HitLight = Color(0xFFC8F0D2)
+private val HitLightText = Color(0xFF0A3D1C)
+private val HitDark = Color(0xFF1F4430)
+private val HitDarkText = Color(0xFFB8F0C8)
+
+private val TruncatedLight = Color(0xFFFDEFB2)
+private val TruncatedLightText = Color(0xFF3A2E00)
+private val TruncatedDark = Color(0xFF443A10)
+private val TruncatedDarkText = Color(0xFFF5E3A0)
+
+private val RunningLight = Color(0xFFFFDAD6)
+private val RunningLightText = Color(0xFF410002)
+private val RunningDark = Color(0xFF561E1B)
+private val RunningDarkText = Color(0xFFFFB4AB)
+
+/** 卡片底色：命中绿、轮次用尽黄、仍在跑浅红，其余保持中性 */
 @Composable
-private fun LaneState.tileColors(): CardColors = when (this) {
-    is LaneState.Hit -> CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-    )
+private fun LaneState.tileColors(): CardColors {
+    val dark = isSystemInDarkTheme()
+    return when (this) {
+        is LaneState.Hit -> CardDefaults.cardColors(
+            containerColor = if (dark) HitDark else HitLight,
+            contentColor = if (dark) HitDarkText else HitLightText,
+        )
 
-    is LaneState.Failed -> CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.errorContainer,
-    )
+        is LaneState.Running -> CardDefaults.cardColors(
+            containerColor = if (dark) RunningDark else RunningLight,
+            contentColor = if (dark) RunningDarkText else RunningLightText,
+        )
 
-    is LaneState.Truncated -> CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-    )
+        is LaneState.Truncated -> CardDefaults.cardColors(
+            containerColor = if (dark) TruncatedDark else TruncatedLight,
+            contentColor = if (dark) TruncatedDarkText else TruncatedLightText,
+        )
 
-    else -> CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-    )
+        is LaneState.Failed -> CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        )
+
+        else -> CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        )
+    }
 }
 
 @Composable
-private fun LaneState.accentColor(): Color = when (this) {
-    // 底色换成容器色后，强调色要用配套的 on* 才能保证对比度
-    is LaneState.Hit -> MaterialTheme.colorScheme.onPrimaryContainer
-    is LaneState.Truncated -> MaterialTheme.colorScheme.onTertiaryContainer
-    is LaneState.Failed -> MaterialTheme.colorScheme.onErrorContainer
-    is LaneState.Running -> MaterialTheme.colorScheme.tertiary
-    else -> MaterialTheme.colorScheme.onSurfaceVariant
+private fun LaneState.accentColor(): Color {
+    val dark = isSystemInDarkTheme()
+    return when (this) {
+        // 强调色跟底色配套，保证文字和角标在有色底上仍看得清
+        is LaneState.Hit -> if (dark) HitDarkText else HitLightText
+        is LaneState.Running -> if (dark) RunningDarkText else RunningLightText
+        is LaneState.Truncated -> if (dark) TruncatedDarkText else TruncatedLightText
+        is LaneState.Failed -> MaterialTheme.colorScheme.onErrorContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 }
 
 private fun CommitTarget.shortLabel(): String = when (this) {
     CommitTarget.REPLACE_CURRENT -> "当前"
     CommitTarget.APPEND_CANDIDATE -> "候选"
     CommitTarget.NEW_BRANCH -> "分支"
+}
+
+/** 运行中查看当前设置：只允许改轮次上限，其余参数开跑时已固定 */
+@Composable
+private fun RunningSettingsDialog(
+    session: BatchSession,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    val config = session.config
+    var limit by remember(config.maxRerollsPerLane) {
+        mutableStateOf(config.maxRerollsPerLane)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("当前设置") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "请求体、关键词和落盘范围在开跑时就固定了，这里只能调轮次；" +
+                        "改完从下一轮起生效。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SettingRow("并发路数", "${session.lanes.size}")
+                SettingRow("落盘词匹配范围", config.commitScope.scopeLabel())
+                SettingRow("落盘标记词", config.commitKeywords.keywordsLabel())
+                SettingRow("重 roll · 仅思考", config.rerollReasoningKeywords.keywordsLabel())
+                SettingRow("重 roll · 仅正文", config.rerollTextKeywords.keywordsLabel())
+                SettingRow(
+                    "思考深度",
+                    config.reasoningLevelOverride?.let { levelLabel(it) } ?: "跟随会话",
+                )
+                SettingRow("未命中关键词也重 roll", if (config.rerollOnNoHit) "是" else "否")
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                OutlinedTextField(
+                    value = if (limit <= 0) "" else limit.toString(),
+                    onValueChange = { input ->
+                        limit = input.filter { it.isDigit() }.take(4).toIntOrNull() ?: 0
+                    },
+                    label = { Text("最大重 roll 轮次（0 = 不限）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(limit) }) { Text("应用") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+@Composable
+private fun SettingRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(end = 8.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+private fun KeywordScope.scopeLabel(): String = when (this) {
+    KeywordScope.TEXT_ONLY -> "仅正文"
+    KeywordScope.REASONING_ONLY -> "仅思考"
+    KeywordScope.TEXT_AND_REASONING -> "正文+思考"
+}
+
+private fun List<String>.keywordsLabel(): String =
+    if (isEmpty()) "（空）" else joinToString("、")
+
+private fun levelLabel(level: ReasoningLevel): String = when (level) {
+    ReasoningLevel.OFF -> "关闭"
+    ReasoningLevel.AUTO -> "自动"
+    ReasoningLevel.LOW -> "低"
+    ReasoningLevel.MEDIUM -> "中"
+    ReasoningLevel.HIGH -> "高"
+    ReasoningLevel.XHIGH -> "更高"
+    ReasoningLevel.MAX -> "最高"
+}
+
+/** 一行「文字 + 缩小开关」，两个并排放得下 */
+@Composable
+private fun TogglePair(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.scale(0.72f),
+        )
+    }
 }

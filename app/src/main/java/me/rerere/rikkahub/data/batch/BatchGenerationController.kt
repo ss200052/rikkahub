@@ -86,6 +86,14 @@ class BatchGenerationController(
     private var batchJob: Job? = null
     private val laneJobs = mutableMapOf<Int, Job>()
 
+    /**
+     * 续写模式下「已经被预填进去的那一段」。
+     *
+     * 整批共用同一份：每一路都是「原消息 + 新生成」拼起来的完整回复，
+     * 所以查看和落盘都不需要各自记住前缀。
+     */
+    private var continuePrefix: UIMessage? = null
+
     /** 重新发起一路所需的工厂；start 时记下来，供「重跑」使用 */
     private var laneFactory: (() -> Pair<AgentRequest, AgentHooks>)? = null
 
@@ -118,6 +126,8 @@ class BatchGenerationController(
         targetNodeId: Uuid,
         config: BatchRegenerationConfig,
         conversationTitle: String = "",
+        /** 续写模式：这条已存在的回复会作为每路结果的前缀 */
+        continuePrefix: UIMessage? = null,
         newAgent: () -> Pair<AgentRequest, AgentHooks>,
     ): Boolean = startMutex.withLock {
         if (isRunning) return@withLock false
@@ -133,6 +143,7 @@ class BatchGenerationController(
             runId = runId,
         )
         laneJobs.clear()
+        this.continuePrefix = continuePrefix
         // 记住重新发起某一路的方式，供「重跑」使用
         laneFactory = newAgent
 
@@ -194,6 +205,60 @@ class BatchGenerationController(
         get() = _session.value?.lanes?.any { it is LaneState.Failed } == true
 
     /**
+     * 临时再插一路进来，用发起时记下的工厂重新造一份请求。
+     *
+     * 不改动原始并发路数，只在末尾追加；总数受 [BatchRegenerationConfig.MAX_PARALLEL] 限制。
+     * 返回 false 表示当前插不了（没有工厂、批次已清空、或已经到上限）。
+     */
+    fun addLane(): Boolean {
+        val factory = laneFactory ?: return false
+        val current = _session.value ?: return false
+        if (current.lanes.size >= BatchRegenerationConfig.MAX_PARALLEL) return false
+        val runId = current.runId
+        val index = current.lanes.size
+
+        var appended = false
+        _session.update { session ->
+            if (session == null || session.runId != runId) {
+                session
+            } else {
+                appended = true
+                session.copy(
+                    lanes = session.lanes + LaneState.Idle(index),
+                    // 多出一路没跑完，整批重新回到未完成
+                    finished = false,
+                )
+            }
+        }
+        if (!appended) return false
+
+        laneJobs[index] = appScope.launch(Dispatchers.IO) {
+            runLane(runId, index, current.config, factory)
+        }
+        return true
+    }
+
+    /**
+     * 运行中调轮次上限。
+     *
+     * 只改这一个值：请求体、关键词、落盘范围都不动。
+     * 已经在跑的路每一轮都会重新读配置，所以下一轮就按新上限判定。
+     */
+    fun updateMaxRerolls(limit: Int) {
+        val value = limit.coerceAtLeast(0)
+        _session.update { it?.copy(config = it.config.copy(maxRerollsPerLane = value)) }
+    }
+
+    /** 运行中切换「熄屏也跑」，只改配置里的这一个开关 */
+    fun updateKeepAwake(enabled: Boolean) {
+        _session.update { it?.copy(config = it.config.copy(keepAwakeWhileScreenOff = enabled)) }
+    }
+
+    /** 取这一批当前生效的配置；批次已被换掉时退回调用方手里那份 */
+    private fun liveConfig(runId: Long, fallback: BatchRegenerationConfig): BatchRegenerationConfig =
+        _session.value?.takeIf { it.runId == runId }?.config ?: fallback
+
+    /**
      * 这个批次要不要自动展开工作台。
      *
      * 每个批次只返回一次 true：用户收起之后，切换对话、重新进入都不该再被强行弹出来。
@@ -232,6 +297,7 @@ class BatchGenerationController(
         batchJob = null
         laneJobs.clear()
         laneFactory = null
+        continuePrefix = null
         _session.value = null
     }
 
@@ -263,6 +329,8 @@ class BatchGenerationController(
         publish(runId, index, LaneState.Running(index, attempt, rerollCount, lastHit))
 
         while (true) {
+            // 每轮都重新取一次配置：运行中改了轮次上限，下一轮立刻按新值判定
+            val live = liveConfig(runId, config)
             var latest: UIMessage? = null
             var hit: KeywordHit? = null
             try {
@@ -272,7 +340,7 @@ class BatchGenerationController(
                         is AgentEvent.MessageUpdated -> {
                             latest = event.message
                             // 重 roll 只在流式过程中实时判定，思考与正文两组词分别检查，命中即中止本轮
-                            config.findRerollHit(event.message)?.let { throw LaneRerollSignal(it) }
+                            live.findRerollHit(event.message)?.let { throw LaneRerollSignal(it) }
                         }
 
                         is AgentEvent.Finished -> latest = event.message
@@ -318,7 +386,7 @@ class BatchGenerationController(
             }
 
             // 轮次上限：0 表示不设限，只能靠手动停止
-            val limit = config.maxRerollsPerLane
+            val limit = live.maxRerollsPerLane
             val reachedLimit = limit > 0 && rerollCount >= limit
 
             if (hit != null) {
@@ -342,7 +410,7 @@ class BatchGenerationController(
             }
 
             // 落盘词只做标记：配了才判定，没配就一律不算命中
-            val commitHit = config.findCommitHit(message)
+            val commitHit = live.findCommitHit(message)
 
             // 已经命中落盘词 = 这轮就是要的结果，直接收下，不再重来。
             // 这个判断必须排在「未命中也重 roll」之前，否则会把好结果丢掉。
@@ -354,7 +422,7 @@ class BatchGenerationController(
                     _laneHits.tryEmit(
                         LaneHitEvent(
                             laneIndex = index,
-                            laneCount = config.parallelCount,
+                            laneCount = _session.value?.lanes?.size ?: config.parallelCount,
                             keyword = commitHit.keyword,
                             source = commitHit.source,
                         ),
@@ -364,7 +432,7 @@ class BatchGenerationController(
             }
 
             // 没命中落盘词、开关打开：继续重来，直到跑满轮次
-            if (config.rerollOnNoHit && !reachedLimit) {
+            if (live.rerollOnNoHit && !reachedLimit) {
                 rerollCount++
                 lastHit = null
                 attempt++
@@ -385,13 +453,24 @@ class BatchGenerationController(
      * 不校验的话它们会把上一批的轮次写进新一批的格子，看起来就是数字来回闪。
      */
     private fun publish(runId: Long, index: Int, state: LaneState) {
+        val merged = continuePrefix?.let { prefix ->
+            when (state) {
+                is LaneState.Hit -> state.copy(message = state.message.withContinuePrefix(prefix))
+                is LaneState.Clean -> state.copy(message = state.message.withContinuePrefix(prefix))
+                is LaneState.Truncated ->
+                    state.copy(message = state.message?.withContinuePrefix(prefix))
+                is LaneState.Cancelled ->
+                    state.copy(message = state.message?.withContinuePrefix(prefix))
+                else -> state
+            }
+        } ?: state
         _session.update { current ->
             if (current == null || current.runId != runId) {
                 current
             } else if (index !in current.lanes.indices) {
                 current
             } else {
-                current.withLane(state)
+                current.withLane(merged)
             }
         }
     }

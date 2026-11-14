@@ -198,6 +198,7 @@ fun ChatPage(
     }
 
     val chatListState = rememberLazyListState()
+
     // 搜索结果命中的是另一条分支时，只提示、不擅自改动对话状态
     var pendingBranchSwitch by remember { mutableStateOf<PendingBranchSwitch?>(null) }
     LaunchedEffect(nodeId, messageId, conversation.messageNodes.size) {
@@ -347,6 +348,23 @@ private fun ChatPageContent(
     onSwitchBranch: () -> Unit = {},
     onDismissBranchSwitch: () -> Unit = {},
 ) {
+            // 空输入点发送（＝继续生成）前的二次确认
+            var showContinueConfirm by remember { mutableStateOf(false) }
+
+            // 续写条件：最后一条是助手消息、它还有内容（正文或思维链）、当前没在生成、没被批量锁
+            val continueTarget = conversation.currentMessages.lastOrNull()
+                ?.takeIf { it.role == me.rerere.ai.core.MessageRole.ASSISTANT }
+            val continueHasText = continueTarget?.parts?.any {
+                it is me.rerere.ai.ui.UIMessagePart.Text && it.text.isNotBlank()
+            } == true
+            val continueHasReasoning = continueTarget?.parts?.any {
+                it is me.rerere.ai.ui.UIMessagePart.Reasoning && it.reasoning.isNotBlank()
+            } == true
+            val canContinue = continueTarget != null &&
+                (continueHasText || continueHasReasoning) &&
+                loadingJob == null &&
+                !vm.isBatchLocked
+
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
 
@@ -440,6 +458,7 @@ private fun ChatPageContent(
                     onCancelClick = {
                         vm.stopGeneration()
                     },
+                    allowEmptySend = canContinue,
                     onSendClick = {
                         if (currentChatModel == null) {
                             toaster.show("请先选择模型", type = ToastType.Error)
@@ -450,14 +469,18 @@ private fun ChatPageContent(
                                 parts = inputState.getContents(),
                                 messageId = inputState.editingMessage!!,
                             )
+                            inputState.clearInput()
+                        } else if (inputState.isEmpty() && canContinue) {
+                            // 空输入＝接着上一条助手消息往下写，起点要用户确认
+                            showContinueConfirm = true
                         } else {
                             vm.handleMessageSend(inputState.getContents())
                             scope.launch {
                                 delay(100.milliseconds)
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }
+                            inputState.clearInput()
                         }
-                        inputState.clearInput()
                     },
                     onLongSendClick = {
                         if (inputState.isEditing()) {
@@ -488,6 +511,8 @@ private fun ChatPageContent(
             var batchInspect by remember { mutableStateOf<Int?>(null) }
             var batchCommit by remember { mutableStateOf<Int?>(null) }
             val batchSession by vm.batchSession.collectAsStateWithLifecycle()
+            // 跳转列的「跳到批量目标」需要二次确认
+            var showJumpToBatchConfirm by remember { mutableStateOf(false) }
             LaunchedEffect(batchSession?.runId) {
                 val session = batchSession ?: return@LaunchedEffect
                 // 批次不属于当前对话就不打扰：切换会话时不该弹别人那批的面板
@@ -511,6 +536,7 @@ private fun ChatPageContent(
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
                 },
+                onContinue = { vm.continueGeneration() },
                 onBatchRegenerate = { target ->
                     // 已经有批次（可能属于别的对话、可能还在跑）就直接打开工作台，
                     // 否则会弹出一个注定报「已有一个批量任务在运行」的配置窗
@@ -559,6 +585,9 @@ private fun ChatPageContent(
                         chatListState.requestScrollToItem(index)
                     }
                 },
+                // 只要存在批量任务（哪怕是别的对话的），跳转列里就多出这个入口
+                showBatchJump = batchSession != null,
+                onJumpToBatchTarget = { showJumpToBatchConfirm = true },
                 onToolApproval = { toolCallId, approved, reason ->
                     vm.handleToolApproval(toolCallId, approved, reason)
                 },
@@ -590,6 +619,52 @@ private fun ChatPageContent(
                     onPresetsChange = { vm.saveBatchKeywordPresets(it) },
                     // 弹窗里每改一处就落库：不点「开始」、直接取消、甚至重启 App 都还在
                     onConfigChange = { vm.saveBatchConfig(it) },
+                )
+            }
+
+            // 跳到批量任务发起的那一轮：同一个对话直接滚过去，别的对话则切过去再定位
+            val jumpTargetSession = batchSession
+            if (showJumpToBatchConfirm && jumpTargetSession != null) {
+                val sameConversation = jumpTargetSession.conversationId == conversation.id.toString()
+                AlertDialog(
+                    onDismissRequest = { showJumpToBatchConfirm = false },
+                    title = { Text("跳到批量任务") },
+                    text = {
+                        Text(
+                            if (sameConversation) {
+                                "跳到这一批发起时的那条消息。"
+                            } else {
+                                "这一批属于「${jumpTargetSession.conversationTitle.ifBlank { "另一个对话" }}」，" +
+                                    "确认后会切到那个对话并定位到发起的那一轮。"
+                            },
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                showJumpToBatchConfirm = false
+                                val targetNode = Uuid.parse(jumpTargetSession.targetNodeId)
+                                if (sameConversation) {
+                                    // 已经在这个对话里：直接滚到对应层
+                                    val index = conversation.messageNodes
+                                        .indexOfFirst { it.id == targetNode }
+                                    if (index >= 0) {
+                                        // 和「跳到消息」用同一条路径：列表还没布局好时它会把请求排队
+                                        scope.launch { chatListState.requestScrollToItem(index) }
+                                    }
+                                } else {
+                                    navigateToChatPage(
+                                        navigator = navController,
+                                        chatId = Uuid.parse(jumpTargetSession.conversationId),
+                                        nodeId = targetNode,
+                                    )
+                                }
+                            },
+                        ) { Text("跳转") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showJumpToBatchConfirm = false }) { Text("取消") }
+                    },
                 )
             }
 
@@ -625,6 +700,11 @@ private fun ChatPageContent(
                     onCommit = { batchCommit = it },
                     onRerunLane = { vm.rerunBatchLane(it) },
                     onRerunFailed = { vm.rerunBatchFailedLanes() },
+                    onAddLane = { vm.addBatchLane() },
+                    onUpdateMaxRerolls = { vm.updateBatchMaxRerolls(it) },
+                    quotaProvider = currentChatModel?.findProvider(setting.providers),
+                    batchSpent = vm.batchSpent,
+                    onToggleKeepAwake = { vm.updateBatchKeepAwake(it) },
                     notifyOnHit = setting.notifyBatchHitInBackground,
                     onToggleNotify = { vm.setBatchHitNotification(it) },
                 )
@@ -676,10 +756,14 @@ private fun ChatPageContent(
         if (showSystemPromptInspector) {
             SystemPromptInspectorDialog(
                 blocks = vm.systemPromptBlocks,
+                messages = vm.requestPreviewMessages,
                 presets = setting.systemPromptPresets,
                 schemeId = setting.promptSchemeId,
                 onDismiss = { showSystemPromptInspector = false },
                 onSelectScheme = { id -> vm.selectPromptScheme(id) },
+                customSchemes = setting.customPromptSchemes,
+                onSaveCustomScheme = { vm.saveCustomPromptScheme(it) },
+                onDeleteCustomScheme = { vm.deleteCustomPromptScheme(it) },
                 onSaveText = { blockId, content -> vm.saveSystemPromptText(blockId, content) },
                 onSaveSlots = { blockId, texts -> vm.saveSystemPromptSlots(blockId, texts) },
                 onSavePreset = { name -> vm.saveSystemPromptPreset(name) },

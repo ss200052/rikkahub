@@ -14,6 +14,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +32,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.CustomPromptScheme
 import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
 import me.rerere.rikkahub.data.ai.SystemPromptOverride
@@ -39,6 +42,7 @@ import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.BatchSession
 import me.rerere.rikkahub.data.batch.CommitTarget
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
@@ -70,6 +74,7 @@ class ChatVM(
     private val analytics: FirebaseAnalytics,
     private val filesManager: FilesManager,
     private val favoriteRepository: FavoriteRepository,
+    private val providerManager: me.rerere.ai.provider.ProviderManager,
 ) : ViewModel() {
     private val _conversationId: Uuid = Uuid.parse(id)
     val conversation: StateFlow<Conversation> = chatService.getConversationFlow(_conversationId)
@@ -97,6 +102,17 @@ class ChatVM(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     init {
+        // 批量任务开跑就记账，批次清空则复位
+        viewModelScope.launch {
+            chatService.batchSession.collect { session ->
+                when {
+                    session == null -> stopSpendTracking(reset = true)
+                    !session.finished -> startSpendTracking()
+                    else -> stopSpendTracking(reset = false)
+                }
+            }
+        }
+
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
 
@@ -331,6 +347,15 @@ class ChatVM(
 
     fun stopBatchAll() = chatService.stopBatchAll()
 
+    /** 运行中临时再插一路 */
+    fun addBatchLane(): Boolean = chatService.addBatchLane()
+
+    /** 运行中只改轮次上限，请求体不动 */
+    fun updateBatchMaxRerolls(limit: Int) = chatService.updateBatchMaxRerolls(limit)
+
+    /** 运行中切换「熄屏也跑」 */
+    fun updateBatchKeepAwake(enabled: Boolean) = chatService.updateBatchKeepAwake(enabled)
+
     fun rerunBatchLane(index: Int) = chatService.rerunBatchLane(index)
 
     /** 该批次是否还需要自动展开工作台（每批只返回一次 true） */
@@ -348,6 +373,9 @@ class ChatVM(
     // ---- 系统提示词检查器 ----
 
     var systemPromptBlocks by mutableStateOf<List<SystemPromptBlock>>(emptyList())
+
+    /** 请求体里实际会发出去的消息（只读预览） */
+    var requestPreviewMessages by mutableStateOf<List<me.rerere.ai.ui.UIMessage>>(emptyList())
         private set
 
     /** 最近一次应用方案的结果，界面提示一次后清掉 */
@@ -362,6 +390,10 @@ class ChatVM(
     fun loadSystemPromptBlocks() {
         viewModelScope.launch {
             systemPromptBlocks = chatService.buildSystemPromptBlocks(_conversationId)
+        }
+        viewModelScope.launch {
+            // 请求体预览里的「消息」部分：与真实组装同源
+            requestPreviewMessages = chatService.buildRequestMessages(_conversationId)
         }
     }
 
@@ -409,6 +441,49 @@ class ChatVM(
     }
 
     /** 切换方案：只换文本框里的文字，骨架与数据块不变 */
+    /**
+     * 另存为方案：把「当前生效方案的文字 + 你在界面上的全部槽位改写」整体快照一份。
+     *
+     * 存完立刻切到新方案；之后改它不会影响内置两套。
+     */
+    fun saveCustomPromptScheme(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            settingsStore.update { current ->
+                // of() 依赖登记表，先把当前的自定义方案装上再取文字
+                PromptSchemes.installCustom(current.customPromptSchemes)
+                val base = PromptSchemes.of(current.promptSchemeId).texts
+                val overrides = current.systemPromptOverrides
+                    .flatMap { override -> override.slots.entries }
+                    .associate { it.key to it.value }
+                val scheme = CustomPromptScheme(
+                    id = "custom-" + Uuid.random().toString().take(8),
+                    name = trimmed,
+                    texts = base + overrides,
+                )
+                current.copy(
+                    customPromptSchemes = current.customPromptSchemes + scheme,
+                    promptSchemeId = scheme.id,
+                )
+            }
+            loadSystemPromptBlocks()
+        }
+    }
+
+    /** 删掉一个自定义方案；正用着它就回落到英文方案 */
+    fun deleteCustomPromptScheme(id: String) {
+        viewModelScope.launch {
+            settingsStore.update { current ->
+                current.copy(
+                    customPromptSchemes = current.customPromptSchemes.filterNot { it.id == id },
+                    promptSchemeId = if (current.promptSchemeId == id) PromptSchemes.ENGLISH.id else current.promptSchemeId,
+                )
+            }
+            loadSystemPromptBlocks()
+        }
+    }
+
     fun selectPromptScheme(id: String) {
         viewModelScope.launch {
             settingsStore.update { it.copy(promptSchemeId = id) }
@@ -499,6 +574,66 @@ class ChatVM(
     ) {
         analytics.logEvent("ai_tool_answer", null)
         chatService.handleToolApproval(_conversationId, toolCallId, approved = true, answer = answer)
+    }
+
+    // ---- 本次并发期间的余额消耗 ----
+
+    private val _batchSpent = mutableStateOf<java.math.BigDecimal?>(null)
+
+    /** 本批已经花掉的钱；查不到余额时为 null */
+    val batchSpent: java.math.BigDecimal?
+        get() = _batchSpent.value
+
+    private var spendTrackingJob: Job? = null
+
+    /**
+     * 盯余额计算本批消耗。
+     *
+     * 只累计「下降」的部分：中途充值会让余额上涨，若直接用「初始 - 当前」会把充值冲抵掉，
+     * 所以每次只把相邻两次的下降量加进去，上涨只更新基准、不计入。
+     */
+    private fun startSpendTracking() {
+        if (spendTrackingJob?.isActive == true) return
+        _batchSpent.value = java.math.BigDecimal.ZERO
+        spendTrackingJob = viewModelScope.launch {
+            var lastBalance: java.math.BigDecimal? = null
+            var spent = java.math.BigDecimal.ZERO
+            while (isActive) {
+                val balance = queryBalance()
+                if (balance != null) {
+                    val previous = lastBalance
+                    if (previous != null && balance < previous) {
+                        spent = spent.add(previous.subtract(balance))
+                        _batchSpent.value = spent
+                    }
+                    lastBalance = balance
+                }
+                delay(10_000)
+            }
+        }
+    }
+
+    private fun stopSpendTracking(reset: Boolean) {
+        spendTrackingJob?.cancel()
+        spendTrackingJob = null
+        if (reset) _batchSpent.value = null
+    }
+
+    /** 直接查提供商额度：不走界面那层两分钟缓存，否则轮询拿不到变化 */
+    private suspend fun queryBalance(): java.math.BigDecimal? = runCatching {
+        val current = settingsStore.awaitLoaded()
+        val conversation = conversation.value
+        val model = current.getChatModelOf(conversation) ?: return@runCatching null
+        val provider = model.findProvider(current.providers) ?: return@runCatching null
+        val quota = providerManager.getProviderByType(provider).getQuota(provider)
+        val text = (quota as? me.rerere.ai.provider.ProviderQuota.Balance)?.value
+            ?: return@runCatching null
+        Regex("-?\\d+(?:\\.\\d+)?").find(text)?.value?.toBigDecimalOrNull()
+    }.getOrNull()
+
+    /** 从最后一条助手消息接着往下写 */
+    fun continueGeneration() {
+        chatService.continueGeneration(_conversationId)
     }
 
     fun stopGeneration() {

@@ -101,6 +101,8 @@ data class Settings(
     val systemPromptPresets: List<SystemPromptPreset> = emptyList(),
     // 当前使用的提示词方案（en / zh）：决定各段槽位文字用哪种语言，骨架与数据块不受影响
     val promptSchemeId: String = "en",
+    /** 用户另存的提示词方案（完整槽位文字快照） */
+    val customPromptSchemes: List<me.rerere.rikkahub.data.ai.CustomPromptScheme> = emptyList(),
 ) {
     companion object {
         // 构造一个用于初始化的settings, 但它不能用于保存，防止使用初始值存储
