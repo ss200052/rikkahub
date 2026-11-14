@@ -628,7 +628,7 @@ class ChatVM(
                     }
                     lastBalance = balance
                 }
-                delay(10_000)
+                delay(5_000)
             }
         }
     }

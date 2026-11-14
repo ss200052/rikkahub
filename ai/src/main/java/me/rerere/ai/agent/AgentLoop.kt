@@ -15,7 +15,9 @@ import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.finishReasoning
+import me.rerere.ai.util.StreamIdleTimeoutException
 import me.rerere.ai.util.json
+import me.rerere.ai.util.withIdleTimeout
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.TimeMark
@@ -23,6 +25,11 @@ import kotlin.time.TimeSource
 
 // 输出为空的工具会被当成没执行过，之后每一步都会再执行一次，所以换成占位文本
 private const val EMPTY_TOOL_OUTPUT = "(no output)"
+
+// 流式响应两段空闲上限：还没收到第一个内容时可能只是上游在排队，给得宽一些；
+// 开始产出之后长时间静默基本就是连接死了，判定得紧一些。
+private const val STREAM_IDLE_BEFORE_FIRST_CHUNK_MS = 180_000L
+private const val STREAM_IDLE_AFTER_CHUNK_MS = 90_000L
 
 private class StreamChunkHandlingException(override val cause: Throwable) : RuntimeException(cause)
 
@@ -136,26 +143,59 @@ internal class AgentLoop(
         // 多轮工具调用共用同一条助手消息，消息上已有的 usage 和耗时来自之前的步骤。
         // 本步从清空的统计开始（merge 只适合同一次请求内的快照），再与之前的步骤累加。
         val stepStart = base.copy(usage = null, generationTimeMs = null)
+        // 上一次尝试被判定为空闲超时时，已经生成的内容留在这里。
+        // 重试时把它交给模型接着写，而不是从用户消息开始整段重来：
+        // 批量并发下重来一遍就是双份开销，还会把已经展示给用户的内容冲掉。
+        var interrupted: UIMessage? = null
         return try {
             withRetry(request.retry, onRetry = { events.emit(AgentEvent.Retrying(it)) }) {
                 // 每次重试都从本步开始时的消息重新合并，不会把重试的响应接在已经展示的半截回复后面；
                 // 各次尝试共用同一个消息 id，调用方直接覆盖即可。
                 val handler = StreamChunkHandler(params.model)
-                var attempt = stepStart
+                var attempt = interrupted ?: stepStart
                 var firstChunk: TimeMark? = null
-                request.provider.streamText(request.providerSetting, messages, params).collect { chunk ->
-                    try {
-                        val mark = firstChunk ?: TimeSource.Monotonic.markNow().also { firstChunk = it }
-                        attempt = handler.handle(listOf(attempt), chunk).single()
-                        preview(attempt.withStepStats(base, mark.elapsedNow(), countStep), newPartsFrom = base.parts.size)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        // 合并失败或下游处理失败都不是网络故障，不能重放模型请求
-                        throw StreamChunkHandlingException(e)
-                    }
+                // 有中断前的正文才谈得上续写；空内容的中断直接重新请求
+                val continuation = interrupted?.takeIf { it.parts.isNotEmpty() }
+                val attemptMessages = when {
+                    continuation == null -> messages
+                    // 末尾已经是助手消息时替换它，避免出现两条相邻的 assistant
+                    messages.lastOrNull()?.role == MessageRole.ASSISTANT ->
+                        messages.dropLast(1) + continuation
+
+                    else -> messages + continuation
                 }
-                attempt.withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO, countStep)
+                try {
+                    // SSE 的 keep-alive 注释会让 readTimeout 永远不触发，这里按「有没有真实内容」判定
+                    withIdleTimeout(
+                        firstElementMillis = STREAM_IDLE_BEFORE_FIRST_CHUNK_MS,
+                        subsequentMillis = STREAM_IDLE_AFTER_CHUNK_MS,
+                    ) { onElement ->
+                        request.provider.streamText(request.providerSetting, attemptMessages, params)
+                            .collect { chunk ->
+                                try {
+                                    onElement()
+                                    val mark = firstChunk ?: TimeSource.Monotonic.markNow().also { firstChunk = it }
+                                    attempt = handler.handle(listOf(attempt), chunk).single()
+                                    preview(
+                                        attempt.mergedTextParts()
+                                            .withStepStats(base, mark.elapsedNow(), countStep),
+                                        newPartsFrom = base.parts.size,
+                                    )
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Throwable) {
+                                    // 合并失败或下游处理失败都不是网络故障，不能重放模型请求
+                                    throw StreamChunkHandlingException(e)
+                                }
+                            }
+                    }
+                } catch (e: StreamIdleTimeoutException) {
+                    // 留作下一次尝试的续写起点
+                    interrupted = attempt
+                    throw e
+                }
+                attempt.mergedTextParts()
+                    .withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO, countStep)
             }
         } catch (e: StreamChunkHandlingException) {
             throw e.cause
@@ -284,3 +324,31 @@ private fun UIMessage.withStepStats(stepBase: UIMessage, stepTime: Duration, cou
 )
 
 private fun now() = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+
+/**
+ * 把相邻的文本 part 合回一段。
+ *
+ * 空闲超时后用已有内容续写时，新的文本流会另起一个文本 part（Handler 不知道上一段对应哪个 id），
+ * 渲染出来就是「前半截 / 后半截」两段。若中断正好发生在代码块里，前半截的围栏没闭合，
+ * Markdown 会把后面整段当成代码。没有相邻文本时原样返回，不做多余分配。
+ */
+private fun UIMessage.mergedTextParts(): UIMessage {
+    var needsMerge = false
+    for (i in 1 until parts.size) {
+        if (parts[i - 1] is UIMessagePart.Text && parts[i] is UIMessagePart.Text) {
+            needsMerge = true
+            break
+        }
+    }
+    if (!needsMerge) return this
+    val merged = ArrayList<UIMessagePart>(parts.size)
+    parts.forEach { part ->
+        val last = merged.lastOrNull()
+        if (part is UIMessagePart.Text && last is UIMessagePart.Text) {
+            merged[merged.lastIndex] = last.copy(text = last.text + part.text)
+        } else {
+            merged.add(part)
+        }
+    }
+    return copy(parts = merged)
+}

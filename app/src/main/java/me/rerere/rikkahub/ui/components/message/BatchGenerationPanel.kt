@@ -151,9 +151,10 @@ fun BatchGenerationPanel(
                     }
                 }
 
-                // 额度：只在提供商支持查询时显示，查不到就静默不占位
+                // 额度：只在提供商支持查询时显示，查不到就静默不占位。
+                // 面板会一直开着跑几十分钟，必须定时重查，否则数字停在打开那一刻
                 if (quotaProvider != null) {
-                    val quotaResult = rememberProviderQuota(quotaProvider)
+                    val quotaResult = rememberProviderQuota(quotaProvider, refreshIntervalMillis = 5_000)
                     val quota = quotaResult?.getOrNull()
                     if (quota != null) {
                         Row(

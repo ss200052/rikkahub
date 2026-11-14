@@ -18,8 +18,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import me.rerere.rikkahub.R
@@ -34,7 +36,9 @@ import me.rerere.rikkahub.ui.components.ui.ConnectedChoiceLabel
 import me.rerere.rikkahub.ui.components.ui.switchItem
 import me.rerere.rikkahub.ui.hooks.rememberSharedPreferenceBoolean
 import me.rerere.rikkahub.ui.theme.CustomColors
+import me.rerere.rikkahub.utils.isIgnoringBatteryOptimizations
 import me.rerere.rikkahub.utils.plus
+import me.rerere.rikkahub.utils.requestIgnoreBatteryOptimizations
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -125,6 +129,38 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
                             )
                         }
                     }
+                }
+            }
+
+            // 批量任务熄屏挂机能不能撑住，取决于系统是否允许这个应用后台不受限制
+            item {
+                val context = LocalContext.current
+                var ignoringBatteryOptimizations by remember {
+                    mutableStateOf(context.isIgnoringBatteryOptimizations())
+                }
+                LifecycleResumeEffect(Unit) {
+                    ignoringBatteryOptimizations = context.isIgnoringBatteryOptimizations()
+                    onPauseOrDispose { }
+                }
+                CardGroup {
+                    item(
+                        onClick = {
+                            if (!ignoringBatteryOptimizations) context.requestIgnoreBatteryOptimizations()
+                        },
+                        headlineContent = { Text("后台运行不受限制") },
+                        supportingContent = {
+                            Text(
+                                if (ignoringBatteryOptimizations) {
+                                    "已允许：熄屏挂机时系统不再限制网络，批量任务能一直跑到结束"
+                                } else {
+                                    "未允许：熄屏几分钟后系统会限制网络，批量任务会停在同一处不动"
+                                }
+                            )
+                        },
+                        trailingContent = {
+                            CardGroupValue(if (ignoringBatteryOptimizations) "已允许" else "去允许")
+                        },
+                    )
                 }
             }
 

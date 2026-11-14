@@ -12,6 +12,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
@@ -21,6 +23,9 @@ import org.koin.android.ext.android.inject
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatGenerationFgs"
+
+// 唤醒锁按时长分片申请，到期前续一次；一次性申请几小时会在任务跑超后静默失效
+private const val WAKE_LOCK_SLICE_MS = 30 * 60 * 1000L
 
 /**
  * Keeps the app process in the foreground while one or more chat generations are active.
@@ -102,6 +107,9 @@ class ChatGenerationForegroundService : Service() {
 
     /** 熄屏继续跑时持有的 CPU 锁；不需要时保持为 null */
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+
+    /** 唤醒锁续期任务，锁释放时一并取消 */
+    private var wakeLockRenewJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -206,6 +214,9 @@ class ChatGenerationForegroundService : Service() {
      * 熄屏也继续跑：持有 CPU 唤醒锁，避免系统休眠把网络请求挂起。
      *
      * 只有用户在批量设置里显式打开才会走到这里；任务结束立即释放。
+     *
+     * 锁按时长分片申请并循环续期：一次性申请几小时的话，批量任务跑超时后锁会静默失效，
+     * 而界面看起来还在跑，实际已经收不到数据了。
      */
     private fun acquireWakeLock() {
         if (wakeLock != null) return
@@ -216,7 +227,14 @@ class ChatGenerationForegroundService : Service() {
                 "rikkahub:batch-generation",
             ).apply {
                 setReferenceCounted(false)
-                acquire(4 * 60 * 60 * 1000L) // 上限 4 小时，防止忘记释放
+                acquire(WAKE_LOCK_SLICE_MS)
+            }
+            wakeLockRenewJob = appScope.launch {
+                while (isActive) {
+                    delay(WAKE_LOCK_SLICE_MS / 2)
+                    val lock = wakeLock ?: break
+                    runCatching { if (lock.isHeld) lock.acquire(WAKE_LOCK_SLICE_MS) }
+                }
             }
         }.onFailure {
             Log.w(TAG, "Unable to acquire wake lock", it)
@@ -224,6 +242,8 @@ class ChatGenerationForegroundService : Service() {
     }
 
     private fun releaseWakeLock() {
+        wakeLockRenewJob?.cancel()
+        wakeLockRenewJob = null
         runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
         wakeLock = null
     }

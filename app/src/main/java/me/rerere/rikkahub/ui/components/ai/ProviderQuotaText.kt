@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderQuota
 import me.rerere.ai.provider.ProviderSetting
@@ -39,10 +40,16 @@ private val cache = SimpleCache.builder<String, ProviderQuota>()
 /**
  * 查询提供商的额度，结果缓存 2 分钟，失败不缓存。返回 null 表示还在查询。
  *
+ * [refreshIntervalMillis] 大于 0 时按这个间隔反复重查，且**绕过缓存**直接请求：
+ * 批量任务一跑就是几十分钟，只在组合时查一次的话，面板上的数字从打开那刻起就不再变。
+ *
  * 调用前先用 [supportsQuota] 判断有没有额度可查。
  */
 @Composable
-fun rememberProviderQuota(providerSetting: ProviderSetting): Result<ProviderQuota>? {
+fun rememberProviderQuota(
+    providerSetting: ProviderSetting,
+    refreshIntervalMillis: Long = 0,
+): Result<ProviderQuota>? {
     val providerManager = koinInject<ProviderManager>()
     // 查询配置或登录的账号变了要重新查
     val cacheKey = "${providerSetting.id}," + when (providerSetting) {
@@ -52,17 +59,36 @@ fun rememberProviderQuota(providerSetting: ProviderSetting): Result<ProviderQuot
     val quota by produceState(
         initialValue = cache.getIfPresent(cacheKey)?.let { Result.success(it) },
         cacheKey,
+        refreshIntervalMillis,
     ) {
-        val cached = cache.getIfPresent(cacheKey)
-        if (cached != null) {
-            value = Result.success(cached)
+        if (refreshIntervalMillis <= 0) {
+            val cached = cache.getIfPresent(cacheKey)
+            if (cached != null) {
+                value = Result.success(cached)
+                return@produceState
+            }
+            value = null
+            value = runCatching {
+                providerManager.getProviderByType(providerSetting).getQuota(providerSetting)
+                    ?: error("Quota is not available")
+            }.onSuccess { cache.put(cacheKey, it) }
             return@produceState
         }
-        value = null
-        value = runCatching {
-            providerManager.getProviderByType(providerSetting).getQuota(providerSetting)
-                ?: error("Quota is not available")
-        }.onSuccess { cache.put(cacheKey, it) }
+
+        while (true) {
+            val result = runCatching {
+                providerManager.getProviderByType(providerSetting).getQuota(providerSetting)
+                    ?: error("Quota is not available")
+            }
+            if (result.isSuccess) {
+                result.getOrNull()?.let { cache.put(cacheKey, it) }
+                value = result
+            } else if (value?.getOrNull() == null) {
+                // 已经拿到过数字就别被一次失败抹掉，否则面板会闪成错误提示
+                value = result
+            }
+            delay(refreshIntervalMillis)
+        }
     }
     return quota
 }
