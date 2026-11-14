@@ -27,29 +27,33 @@ private const val TAG = "ChatGenerationFgs"
  *
  * Generation itself remains owned by [ChatService]. This service only provides the Android
  * foreground-service lifetime required for streaming to continue after the activity is hidden.
+ *
+ * 另外承担两件事：批量任务时把进度显示在常驻通知上；用户要求「熄屏也跑」时持有 CPU 唤醒锁。
  */
 class ChatGenerationForegroundService : Service() {
     companion object {
         private const val ACTION_ACQUIRE = "me.rerere.rikkahub.action.CHAT_GENERATION_ACQUIRE"
         private const val ACTION_RELEASE = "me.rerere.rikkahub.action.CHAT_GENERATION_RELEASE"
+        private const val ACTION_SET_KEEP_AWAKE = "me.rerere.rikkahub.action.SET_KEEP_AWAKE"
         private const val EXTRA_GENERATION_ID = "generation_id"
         private const val EXTRA_CONVERSATION_ID = "conversation_id"
+        private const val EXTRA_ACTIVITY = "activity"
+        private const val EXTRA_KEEP_AWAKE = "keep_awake"
 
         const val NOTIFICATION_ID = 2002
-
-        private const val EXTRA_KEEP_AWAKE = "keep_awake"
-        private const val ACTION_SET_KEEP_AWAKE = "me.rerere.rikkahub.action.SET_KEEP_AWAKE"
 
         fun acquire(
             context: Context,
             generationId: Uuid,
             conversationId: Uuid,
+            activity: SessionActivity = SessionActivity.Generating,
             keepAwakeWhileScreenOff: Boolean = false,
         ): Boolean {
             val intent = Intent(context, ChatGenerationForegroundService::class.java).apply {
                 action = ACTION_ACQUIRE
                 putExtra(EXTRA_GENERATION_ID, generationId.toString())
                 putExtra(EXTRA_CONVERSATION_ID, conversationId.toString())
+                putExtra(EXTRA_ACTIVITY, activity.name)
                 putExtra(EXTRA_KEEP_AWAKE, keepAwakeWhileScreenOff)
             }
             return runCatching {
@@ -86,16 +90,18 @@ class ChatGenerationForegroundService : Service() {
         }
     }
 
-    private val activeGenerations = linkedMapOf<String, String>()
+    private data class ActiveGeneration(val conversationId: String, val activity: SessionActivity)
+
+    private val activeGenerations = linkedMapOf<String, ActiveGeneration>()
     private var isForeground = false
+    private val appScope: AppScope by inject()
+    private val chatService: ChatService by inject()
 
     /** 批量任务的进度监听：状态一变就刷新常驻通知 */
     private var batchObserver: Job? = null
 
     /** 熄屏继续跑时持有的 CPU 锁；不需要时保持为 null */
     private var wakeLock: android.os.PowerManager.WakeLock? = null
-    private val appScope: AppScope by inject()
-    private val chatService: ChatService by inject()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -131,7 +137,7 @@ class ChatGenerationForegroundService : Service() {
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.e(TAG, "Foreground service timed out (type=$fgsType)")
         activeGenerations.values
-            .mapNotNull { runCatching { Uuid.parse(it) }.getOrNull() }
+            .mapNotNull { runCatching { Uuid.parse(it.conversationId) }.getOrNull() }
             .distinct()
             .forEach { conversationId ->
                 appScope.launch {
@@ -145,9 +151,12 @@ class ChatGenerationForegroundService : Service() {
     private fun acquire(intent: Intent, startId: Int) {
         val generationId = intent.getStringExtra(EXTRA_GENERATION_ID) ?: return stopSelf(startId)
         val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID) ?: return stopSelf(startId)
+        val activity = SessionActivity.entries.find { it.name == intent.getStringExtra(EXTRA_ACTIVITY) }
+            ?: SessionActivity.Generating
         if (intent.getBooleanExtra(EXTRA_KEEP_AWAKE, false)) acquireWakeLock()
-        activeGenerations[generationId] = conversationId
-        updateForegroundNotification(conversationId)
+        val generation = ActiveGeneration(conversationId, activity)
+        activeGenerations[generationId] = generation
+        updateForegroundNotification(generation)
         startBatchObserver()
     }
 
@@ -164,9 +173,9 @@ class ChatGenerationForegroundService : Service() {
         }
     }
 
-    private fun updateForegroundNotification(conversationId: String) {
+    private fun updateForegroundNotification(generation: ActiveGeneration) {
         try {
-            val notification = buildNotification(conversationId)
+            val notification = buildNotification(generation)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 ServiceCompat.startForeground(
                     this,
@@ -221,55 +230,49 @@ class ChatGenerationForegroundService : Service() {
 
     /**
      * 盯着批量任务：每路进入终态、重 roll 次数变化都要反映到常驻通知上。
-     *
-     * 服务随生成任务一同启动，所以这里只负责在它活着期间同步进度。
      */
     private fun startBatchObserver() {
         if (batchObserver?.isActive == true) return
         batchObserver = appScope.launch {
             chatService.batchSession.collect {
                 if (!isForeground) return@collect
-                val conversationId = activeGenerations.values.lastOrNull() ?: return@collect
-                updateForegroundNotification(conversationId)
+                val generation = activeGenerations.values.lastOrNull() ?: return@collect
+                updateForegroundNotification(generation)
             }
         }
     }
 
-    private fun buildNotification(conversationId: String): android.app.Notification {
+    private fun buildNotification(generation: ActiveGeneration): android.app.Notification {
         val builder = NotificationCompat.Builder(this, CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_rikkahub)
-            .setContentIntent(getConversationPendingIntent(conversationId))
+            .setContentIntent(getConversationPendingIntent(generation.conversationId))
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
 
         // 属于这个对话的批量任务：把进度挂在通知上
         val batch = chatService.batchSession.value
-            ?.takeIf { it.conversationId == conversationId }
-        if (batch != null) {
-            val total = batch.lanes.size
-            val done = batch.finishedCount
-            if (batch.finished || total == 0) {
-                builder.setContentTitle(getString(R.string.app_name))
-                    .setContentText(getString(R.string.notification_live_update_title))
-            } else {
-                builder.setContentTitle(
-                    getString(R.string.notification_batch_progress_title, done, total),
-                )
-                builder.setContentText(
-                    getString(
-                        R.string.notification_batch_progress_text,
-                        batch.hitCount,
-                        batch.totalRerolls,
-                    ),
-                )
-                builder.setProgress(total, done, false)
-            }
-        } else {
-            builder.setContentTitle(getString(R.string.app_name))
-                .setContentText(getString(R.string.notification_live_update_title))
+            ?.takeIf { it.conversationId == generation.conversationId }
+        if (batch != null && !batch.finished && batch.lanes.isNotEmpty()) {
+            builder.setContentTitle(
+                getString(R.string.notification_batch_progress_title, batch.finishedCount, batch.lanes.size),
+            )
+            builder.setContentText(
+                getString(R.string.notification_batch_progress_text, batch.hitCount, batch.totalRerolls),
+            )
+            builder.setProgress(batch.lanes.size, batch.finishedCount, false)
+            return builder.build()
         }
 
+        builder.setContentTitle(getString(R.string.app_name))
+            .setContentText(
+                getString(
+                    when (generation.activity) {
+                        SessionActivity.Generating -> R.string.notification_live_update_title
+                        SessionActivity.Compressing -> R.string.chat_page_compressing
+                    },
+                ),
+            )
         return builder.build()
     }
 
