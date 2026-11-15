@@ -36,21 +36,29 @@ enum class BatchKeywordCategory {
 }
 
 /**
+ * 用户显式建的一个词库，在界面上就是一个 tab。
+ *
+ * 库名单独存一份，所以空库也能存在——不靠「里面有没有词」来推断库是否存在，
+ * 也就不会出现那种谁都没建过、却一直挂在那里的「默认」库。
+ */
+@Serializable
+data class BatchKeywordLibrary(
+    val category: BatchKeywordCategory,
+    val name: String,
+)
+
+/**
  * 一条存进关键词库的词。
  *
- * [group] 是用户自己起的 tab 名（例如「语气词」「废话」），空串归到默认分组。
- * 分类决定它出现在哪一组关键词下面，分组决定它出现在那一组的哪个 tab 里。
+ * [group] 是它所属的库名，对应 [BatchKeywordLibrary.name]；分类决定它出现在哪一组关键词下面。
+ * 空串只用于兼容早期没有「库」这个概念时的数据，会在界面里被归到显式建出的库里。
  */
 @Serializable
 data class BatchKeywordPreset(
     val category: BatchKeywordCategory,
     val group: String = "",
     val keyword: String,
-) {
-    companion object {
-        const val DEFAULT_GROUP_LABEL = "默认"
-    }
-}
+)
 
 /** 命中来源：思考内容还是正文 */
 @Serializable

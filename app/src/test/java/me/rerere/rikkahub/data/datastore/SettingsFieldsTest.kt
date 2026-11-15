@@ -12,6 +12,7 @@ import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.batch.BatchKeywordCategory
+import me.rerere.rikkahub.data.batch.BatchKeywordLibrary
 import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.model.Assistant
@@ -189,6 +190,9 @@ private val SAMPLE = Settings(
     batchKeywordPresets = listOf(
         BatchKeywordPreset(BatchKeywordCategory.COMMIT, "语气", "嗯"),
     ),
+    batchKeywordLibraries = listOf(
+        BatchKeywordLibrary(BatchKeywordCategory.COMMIT, "语气"),
+    ),
 )
 
 private val STORED_KEYS = setOf(
@@ -252,4 +256,5 @@ private val STORED_KEYS = setOf(
     "prompt_scheme_id",
     "custom_prompt_schemes",
     "batch_keyword_presets",
+    "batch_keyword_libraries",
 )

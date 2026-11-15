@@ -38,6 +38,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.rikkahub.data.batch.BatchKeywordCategory
+import me.rerere.rikkahub.data.batch.BatchKeywordLibrary
 import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.KeywordScope
@@ -66,16 +67,18 @@ private fun reasoningLabel(level: ReasoningLevel): String = when (level) {
  * 批量重新生成的参数弹窗。
  *
  * 关键词分三组独立配置：落盘标记词、思考内容重 roll 词、正文重 roll 词。
- * 每组下面挂着一份关键词库：库按自定义 tab 分组，点一下就把词加进当前这组，
- * 当前这组的关键词也可以反向存进库里。
+ * 每组下面挂着可以自己新建的词库；库必须先显式建出来才会出现 tab，
+ * 新词可以只加进本次的关键词列表，也可以存进当前选中的库。
  */
 @Composable
 fun BatchRegenerateDialog(
     initial: BatchRegenerationConfig,
     presets: List<BatchKeywordPreset>,
+    libraries: List<BatchKeywordLibrary>,
     onDismiss: () -> Unit,
     onStart: (BatchRegenerationConfig) -> Unit,
     onPresetsChange: (List<BatchKeywordPreset>) -> Unit,
+    onLibrariesChange: (List<BatchKeywordLibrary>) -> Unit,
     /**
      * 弹窗里每改一处就回报一次，由调用方落库。
      *
@@ -236,6 +239,8 @@ fun BatchRegenerateDialog(
                     onChange = { commitKeywords = it },
                     presets = presets,
                     onPresetsChange = onPresetsChange,
+                    libraries = libraries,
+                    onLibrariesChange = onLibrariesChange,
                 )
 
                 // 匹配范围：默认只看正文，避免思考里提到一次就被标记
@@ -263,6 +268,8 @@ fun BatchRegenerateDialog(
                     onChange = { reasoningKeywords = it },
                     presets = presets,
                     onPresetsChange = onPresetsChange,
+                    libraries = libraries,
+                    onLibrariesChange = onLibrariesChange,
                 )
 
                 KeywordEditor(
@@ -273,6 +280,8 @@ fun BatchRegenerateDialog(
                     onChange = { textKeywords = it },
                     presets = presets,
                     onPresetsChange = onPresetsChange,
+                    libraries = libraries,
+                    onLibrariesChange = onLibrariesChange,
                 )
 
                 HorizontalDivider()
@@ -362,8 +371,8 @@ fun BatchRegenerateDialog(
 /**
  * 一组关键词的编辑区，下面挂着属于这一类别的关键词库。
  *
- * 库的 tab 是用户自己起的分组名；点库里的词就加进上面这组，
- * 也可以把上面这组现有的词存进库里（存进当前 tab，或存成一个新分组）。
+ * 库必须先显式「新建」出来才会出现 tab；不存在那种谁都没建、却一直挂着的默认库。
+ * 库名单独存一份，所以空库也能一直存在，不会因为里面没词就消失。
  */
 @Composable
 private fun KeywordEditor(
@@ -374,50 +383,155 @@ private fun KeywordEditor(
     onChange: (List<String>) -> Unit,
     presets: List<BatchKeywordPreset>,
     onPresetsChange: (List<BatchKeywordPreset>) -> Unit,
+    libraries: List<BatchKeywordLibrary>,
+    onLibrariesChange: (List<BatchKeywordLibrary>) -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
-    var newGroupName by remember { mutableStateOf("") }
-    var showNewGroup by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<String?>(null) }
+    var newLibraryName by remember { mutableStateOf("") }
+    var showNewLibrary by remember { mutableStateOf(false) }
+    var pendingDeleteKeyword by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteLibrary by remember { mutableStateOf<String?>(null) }
 
-    val groups = remember(presets, category) {
-        presets.filter { it.category == category }.map { it.group }.distinct()
+    // 这一类下已显式建出的库，按建库顺序排
+    val libraryNames = remember(libraries, category) {
+        libraries.filter { it.category == category }.map { it.name }
     }
-    var selectedGroup by remember(category) { mutableStateOf(groups.firstOrNull().orEmpty()) }
-    // 分组被删空时选中的 tab 要跟着回退
-    val activeGroup = if (selectedGroup in groups) selectedGroup else groups.firstOrNull().orEmpty()
-    val activeKeywords = presets
-        .filter { it.category == category && it.group == activeGroup }
-        .map { it.keyword }
+    // 早期没有「库」概念时存下的词（group 为空），或者库已被删掉却还留着词：
+    // 都算还没归属，等有库以后并进第一个库，避免它们凭空消失
+    val orphanKeywords = remember(presets, category, libraryNames) {
+        presets.filter { it.category == category && it.group !in libraryNames }.map { it.keyword }
+    }
 
-    // 开关：点一下就是「这次用它 / 这次不用它」
+    var selectedLibrary by remember(category) { mutableStateOf<String?>(null) }
+    // 只有用户点了某个库 tab 才算选中；库被删掉时自动回到「未选中」
+    val activeLibrary = selectedLibrary?.takeIf { it in libraryNames }
+    val activeKeywords = activeLibrary?.let { library ->
+        presets.filter { it.category == category && it.group == library }.map { it.keyword }
+    }.orEmpty()
+
+    // 启用的唯一判据：本次关键词列表。「本次生效」区和库里的词条都读这一份，
+    // 不存在第二份状态，任何一边取消/启用都会同时反映到另一边
+    val enabledKeywords = remember(keywords) { keywords.map { it.trim() }.toSet() }
+
+    fun isEnabled(keyword: String) = keyword.trim() in enabledKeywords
+
+    // 列表里还没进当前库的词：有选中库时才能收，没选中时为空
+    val pendingAdopt = if (activeLibrary == null) {
+        emptyList()
+    } else {
+        keywords.map { it.trim() }.filter { text ->
+            text.isNotEmpty() && presets.none {
+                it.category == category && it.group == activeLibrary && it.keyword == text
+            }
+        }
+    }
+
+    LaunchedEffect(category, libraryNames, orphanKeywords) {
+        val target = libraryNames.firstOrNull() ?: return@LaunchedEffect
+        if (orphanKeywords.isEmpty()) return@LaunchedEffect
+        onPresetsChange(
+            presets.map { preset ->
+                if (preset.category == category && preset.group !in libraryNames) {
+                    preset.copy(group = target)
+                } else {
+                    preset
+                }
+            },
+        )
+    }
+
+    // 开关：点一下就是「这次用它 / 这次不用它」。两边都走这里，保证状态一致
     fun toggle(keyword: String) {
-        onChange(if (keyword in keywords) keywords - keyword else (keywords + keyword).distinct())
+        val text = keyword.trim()
+        onChange(if (text in keywords) keywords - text else (keywords + text).distinct())
     }
 
-    // 新词直接进当前库，并立刻标记为本次使用
-    fun addAndStore(value: String) {
+    // 只作用于本次，不碰词库
+    fun useOnce(value: String) {
         val text = value.trim()
         if (text.isEmpty()) return
-        val group = activeGroup
         if (text !in keywords) onChange((keywords + text).distinct())
-        val exists = presets.any { it.category == category && it.group == group && it.keyword == text }
+    }
+
+    // 存进当前选中的库，并立刻标记为本次使用；没有库时不接收
+    fun storeIntoLibrary(value: String) {
+        val text = value.trim()
+        val library = activeLibrary ?: return
+        if (text.isEmpty()) return
+        if (text !in keywords) onChange((keywords + text).distinct())
+        val exists = presets.any {
+            it.category == category && it.group == library && it.keyword == text
+        }
         if (!exists) {
             onPresetsChange(
-                presets + BatchKeywordPreset(category = category, group = group, keyword = text),
+                presets + BatchKeywordPreset(category = category, group = library, keyword = text),
             )
         }
-        selectedGroup = group
+    }
+
+    fun createLibrary(value: String) {
+        val name = value.trim()
+        if (name.isEmpty()) return
+        if (libraryNames.any { it.equals(name, ignoreCase = true) }) return
+        onLibrariesChange(libraries + BatchKeywordLibrary(category = category, name = name))
+        selectedLibrary = name
+    }
+
+    // 删库：库名、库里的词、以及这些词在本次生效里的开关一起收走
+    fun deleteLibrary(name: String) {
+        val removed = presets
+            .filter { it.category == category && it.group == name }
+            .map { it.keyword }
+        onLibrariesChange(libraries.filterNot { it.category == category && it.name == name })
+        onPresetsChange(presets.filterNot { it.category == category && it.group == name })
+        if (removed.isNotEmpty()) onChange(keywords - removed.toSet())
+        selectedLibrary = null
     }
 
     // 长按确认后从库里彻底删掉，顺带从本次使用里摘掉
     fun removeFromLibrary(keyword: String) {
+        val library = activeLibrary ?: return
         onPresetsChange(
             presets.filterNot {
-                it.category == category && it.group == activeGroup && it.keyword == keyword
+                it.category == category && it.group == library && it.keyword == keyword
             },
         )
-        if (keyword in keywords) onChange(keywords - keyword)
+        val text = keyword.trim()
+        if (text in keywords) onChange(keywords - text)
+    }
+
+    // 把「本次生效」里已有的词收进当前库：不必删掉重输一遍。
+    // 已经在这个库里的词跳过，不会重复写。
+    fun adoptIntoLibrary(keyword: String) {
+        val library = activeLibrary ?: return
+        val text = keyword.trim()
+        if (text.isEmpty()) return
+        val exists = presets.any {
+            it.category == category && it.group == library && it.keyword == text
+        }
+        if (exists) return
+        onPresetsChange(
+            presets + BatchKeywordPreset(category = category, group = library, keyword = text),
+        )
+    }
+
+    // 一键把列表里还没进当前库的词全收进去
+    fun adoptAllIntoLibrary() {
+        val library = activeLibrary ?: return
+        val missing = keywords
+            .map { it.trim() }
+            .filter { text ->
+                text.isNotEmpty() && presets.none {
+                    it.category == category && it.group == library && it.keyword == text
+                }
+            }
+            .distinct()
+        if (missing.isEmpty()) return
+        onPresetsChange(
+            presets + missing.map {
+                BatchKeywordPreset(category = category, group = library, keyword = it)
+            },
+        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -428,51 +542,95 @@ private fun KeywordEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // 本次生效：库里的开关汇总在这里，点一下取消
+        // 本次生效：点一下取消；长按收进当前库（没选中库时长按什么也不做）
         if (keywords.isNotEmpty()) {
             Text(
-                text = "本次生效 ${keywords.size} 个（点一下取消）",
+                text = if (activeLibrary != null) {
+                    "本次生效 ${keywords.size} 个（点一下取消，长按收进「$activeLibrary」）"
+                } else {
+                    "本次生效 ${keywords.size} 个（点一下取消）"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 keywords.forEach { keyword ->
-                    FilterChip(
-                        selected = true,
-                        onClick = { toggle(keyword) },
-                        label = { Text(keyword) },
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.combinedClickable(
+                            onClick = { toggle(keyword) },
+                            onLongClick = { adoptIntoLibrary(keyword) },
+                        ),
+                    ) {
+                        Text(
+                            text = "✓ $keyword",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+            // 一键把列表里还没进库的词全收进去；没选中库、或全都已在库里时不显示
+            if (activeLibrary != null && pendingAdopt.isNotEmpty()) {
+                TextButton(
+                    onClick = { adoptAllIntoLibrary() },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text(
+                        text = "把列表里这 ${pendingAdopt.size} 个词收进「$activeLibrary」",
+                        style = MaterialTheme.typography.labelSmall,
                     )
                 }
             }
         }
 
-        // 词库：一个库一个 tab，选中哪个就显示哪个库里的词
-        if (groups.isNotEmpty()) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                groups.forEach { group ->
-                    FilterChip(
-                        selected = group == activeGroup,
-                        onClick = { selectedGroup = group },
-                        label = { Text(group.ifBlank { BatchKeywordPreset.DEFAULT_GROUP_LABEL }) },
-                    )
-                }
-                TextButton(
-                    onClick = { showNewGroup = !showNewGroup },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = Modifier.height(28.dp),
-                ) { Text("＋新库", style = MaterialTheme.typography.labelMedium) }
-            }
-
-            if (activeKeywords.isEmpty()) {
-                Text(
-                    text = "这个库还是空的，在下面的输入框加一个就会进来。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        // 词库 tab：必须先「新建」出来才会出现，没有隐式的默认库。
+        // 再点一次已选中的库可以取消选中，回到「只用关键词列表」的状态
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            libraryNames.forEach { library ->
+                FilterChip(
+                    selected = library == activeLibrary,
+                    onClick = {
+                        selectedLibrary = if (library == activeLibrary) null else library
+                    },
+                    label = { Text(library) },
                 )
-            } else {
+            }
+            TextButton(
+                onClick = { showNewLibrary = !showNewLibrary },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(28.dp),
+            ) { Text("＋新建库", style = MaterialTheme.typography.labelMedium) }
+        }
+
+        when {
+            libraryNames.isEmpty() -> Text(
+                text = "还没有词库。点上面的「＋新建库」建一个，或者直接用下面的「加入关键词列表」。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            activeLibrary == null -> Text(
+                text = "点上面任意一个库，可以看里面的词、往里加词。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            activeKeywords.isEmpty() -> Text(
+                text = "「$activeLibrary」还是空的，用下面的「加入当前库」加词。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            else -> {
                 Text(
                     text = "点词＝开关；长按＝从库里删掉",
                     style = MaterialTheme.typography.labelSmall,
@@ -483,7 +641,7 @@ private fun KeywordEditor(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     activeKeywords.forEach { keyword ->
-                        val on = keyword in keywords
+                        val on = isEnabled(keyword)
                         Surface(
                             shape = MaterialTheme.shapes.small,
                             color = if (on) {
@@ -493,7 +651,7 @@ private fun KeywordEditor(
                             },
                             modifier = Modifier.combinedClickable(
                                 onClick = { toggle(keyword) },
-                                onLongClick = { pendingDelete = keyword },
+                                onLongClick = { pendingDeleteKeyword = keyword },
                             ),
                         ) {
                             Text(
@@ -509,95 +667,120 @@ private fun KeywordEditor(
                         }
                     }
                 }
-                TextButton(
-                    onClick = {
-                        onPresetsChange(
-                            presets.filterNot {
-                                it.category == category && it.group == activeGroup
-                            },
-                        )
-                    },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                ) {
-                    Text(
-                        text = "删掉「${activeGroup.ifBlank { BatchKeywordPreset.DEFAULT_GROUP_LABEL }}」这个库",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
             }
         }
 
-        // 新增词：进当前库并自动开启
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 删库要二次确认：库名、库里的词、以及这些词在本次生效里的开关会一起收走
+        if (activeLibrary != null) {
+            TextButton(
+                onClick = { pendingDeleteLibrary = activeLibrary },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) {
+                Text(
+                    text = "删掉「$activeLibrary」这个库",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+
+        // 新增词：两个动作分开。「加入关键词列表」只作用于本次；
+        // 「加入当前库」写进选中的库，未选中库时不显示这个按钮
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
                 singleLine = true,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("新增一个词", style = MaterialTheme.typography.bodySmall) },
             )
-            TextButton(
-                enabled = draft.isNotBlank(),
-                onClick = {
-                    addAndStore(draft)
-                    draft = ""
-                },
-            ) { Text("添加") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    enabled = draft.isNotBlank(),
+                    onClick = {
+                        useOnce(draft)
+                        draft = ""
+                    },
+                ) { Text("加入关键词列表") }
+                if (activeLibrary != null) {
+                    TextButton(
+                        enabled = draft.isNotBlank(),
+                        onClick = {
+                            storeIntoLibrary(draft)
+                            draft = ""
+                        },
+                    ) { Text("加入当前库") }
+                }
+            }
         }
 
-        if (showNewGroup) {
+        // 新建库：建出来就是一个空库，立刻选中它
+        if (showNewLibrary) {
+            val name = newLibraryName.trim()
+            val duplicated = name.isNotEmpty() && libraryNames.any { it.equals(name, ignoreCase = true) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
-                    value = newGroupName,
-                    onValueChange = { newGroupName = it },
+                    value = newLibraryName,
+                    onValueChange = { newLibraryName = it },
                     singleLine = true,
                     label = { Text("新库名") },
+                    isError = duplicated,
+                    supportingText = if (duplicated) {
+                        { Text("已经有同名的库了", style = MaterialTheme.typography.labelSmall) }
+                    } else {
+                        null
+                    },
                     modifier = Modifier
                         .weight(1f)
                         .padding(end = 4.dp),
                 )
                 TextButton(
-                    enabled = newGroupName.isNotBlank(),
+                    enabled = name.isNotEmpty() && !duplicated,
                     onClick = {
-                        val name = newGroupName.trim()
-                        val exists = presets.any { it.category == category && it.group == name }
-                        if (!exists) {
-                            // 一个库靠它里面的词存在，先放一个词进去，随后可以删掉
-                            onPresetsChange(
-                                presets + BatchKeywordPreset(
-                                    category = category,
-                                    group = name,
-                                    keyword = name,
-                                ),
-                            )
-                        }
-                        selectedGroup = name
-                        newGroupName = ""
-                        showNewGroup = false
+                        createLibrary(newLibraryName)
+                        newLibraryName = ""
+                        showNewLibrary = false
                     },
-                ) { Text("确定") }
+                ) { Text("建库") }
             }
         }
     }
 
-    // 长按删除要二次确认：库是持久数据，误删不划算
-    pendingDelete?.let { keyword ->
+    // 长按删词要二次确认：库是持久数据，误删不划算
+    pendingDeleteKeyword?.let { keyword ->
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDeleteKeyword = null },
             title = { Text("从库里删除") },
             text = { Text("把「$keyword」从当前库里删掉？本次使用也会一并取消。") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         removeFromLibrary(keyword)
-                        pendingDelete = null
+                        pendingDeleteKeyword = null
                     },
                 ) { Text("删除") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+                TextButton(onClick = { pendingDeleteKeyword = null }) { Text("取消") }
+            },
+        )
+    }
+
+    // 删库要确认：库名、库里的词、以及这些词的开关会一起没
+    pendingDeleteLibrary?.let { library ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteLibrary = null },
+            title = { Text("删除词库") },
+            text = { Text("「$library」里的词会一起删掉，本次已启用的也会取消。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteLibrary(library)
+                        pendingDeleteLibrary = null
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteLibrary = null }) { Text("取消") }
             },
         )
     }

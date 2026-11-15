@@ -668,12 +668,14 @@ private fun ChatPageContent(
                 BatchRegenerateDialog(
                     initial = vm.lastBatchConfig,
                     presets = setting.batchKeywordPresets,
+                    libraries = setting.batchKeywordLibraries,
                     onDismiss = { batchTarget = null },
                     onStart = { config ->
                         batchTarget = null
                         vm.startBatchRegenerate(pendingBatchTarget, config)
                     },
                     onPresetsChange = { vm.saveBatchKeywordPresets(it) },
+                    onLibrariesChange = { vm.saveBatchKeywordLibraries(it) },
                     // 弹窗里每改一处就落库：不点「开始」、直接取消、甚至重启 App 都还在
                     onConfigChange = { vm.saveBatchConfig(it) },
                 )

@@ -37,6 +37,7 @@ import me.rerere.rikkahub.data.ai.PromptSchemes
 import me.rerere.rikkahub.data.ai.SystemPromptBlock
 import me.rerere.rikkahub.data.ai.SystemPromptOverride
 import me.rerere.rikkahub.data.ai.SystemPromptPreset
+import me.rerere.rikkahub.data.batch.BatchKeywordLibrary
 import me.rerere.rikkahub.data.batch.BatchKeywordPreset
 import me.rerere.rikkahub.data.batch.BatchRegenerationConfig
 import me.rerere.rikkahub.data.batch.BatchSession
@@ -368,6 +369,17 @@ class ChatVM(
                 .filter { it.keyword.isNotEmpty() }
                 .distinctBy { Triple(it.category, it.group, it.keyword) }
             settingsStore.update { it.copy(batchKeywordPresets = cleaned) }
+        }
+    }
+
+    /** 词库名单单独存：库不靠「里面有没有词」推断，空库也得能一直存在 */
+    fun saveBatchKeywordLibraries(libraries: List<BatchKeywordLibrary>) {
+        viewModelScope.launch {
+            val cleaned = libraries
+                .map { it.copy(name = it.name.trim()) }
+                .filter { it.name.isNotEmpty() }
+                .distinctBy { it.category to it.name }
+            settingsStore.update { it.copy(batchKeywordLibraries = cleaned) }
         }
     }
 

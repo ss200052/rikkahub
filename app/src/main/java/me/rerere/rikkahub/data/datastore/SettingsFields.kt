@@ -180,6 +180,9 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         // 批量重新生成
         json(BATCH_REGENERATION, Settings::batchRegeneration) { copy(batchRegeneration = it) },
         json(BATCH_KEYWORD_PRESETS, Settings::batchKeywordPresets) { copy(batchKeywordPresets = it) },
+        json(BATCH_KEYWORD_LIBRARIES, Settings::batchKeywordLibraries) {
+            copy(batchKeywordLibraries = it)
+        },
         plain(NOTIFY_BATCH_HIT_IN_BACKGROUND, Settings::notifyBatchHitInBackground) {
             copy(notifyBatchHitInBackground = it)
         },
