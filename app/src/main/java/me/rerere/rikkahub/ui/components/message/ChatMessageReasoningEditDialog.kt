@@ -45,7 +45,44 @@ fun ChatMessageReasoningEditDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    val original = reasoning.reasoning
+    LongTextEditDialog(
+        title = stringResource(R.string.chat_input_edit_reasoning),
+        label = stringResource(R.string.chat_input_edit_reasoning),
+        original = reasoning.reasoning,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
+/**
+ * 正文段的就地编辑对话框，与思考共用同一套切片和布局。
+ *
+ * 除了改已有正文，手动新建一段空正文也走这里：内容非空才会被调用方写回消息。
+ */
+@Composable
+fun ChatMessageTextEditDialog(
+    text: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    LongTextEditDialog(
+        title = "编辑正文",
+        label = "正文",
+        original = text,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
+/** 长文本编辑的公共实现：切片、翻页、只记录改过的片 */
+@Composable
+private fun LongTextEditDialog(
+    title: String,
+    label: String,
+    original: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
     val slices = remember(original) { sliceReasoning(original) }
     // 只记录被改过的片；没改的片直接用原文，省一份全文副本
     val edits = remember(original) { mutableStateMapOf<Int, String>() }
@@ -54,7 +91,7 @@ fun ChatMessageReasoningEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.chat_input_edit_reasoning)) },
+        title = { Text(title) },
         text = {
             Column(
                 // 这里不能再套 verticalScroll：输入框拿到焦点时会请求「让光标可见」，
@@ -98,7 +135,7 @@ fun ChatMessageReasoningEditDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    label = { Text(stringResource(R.string.chat_input_edit_reasoning)) },
+                    label = { Text(label) },
                     singleLine = false,
                 )
 

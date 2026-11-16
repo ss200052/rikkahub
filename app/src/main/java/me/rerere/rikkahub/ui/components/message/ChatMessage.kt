@@ -169,6 +169,9 @@ fun ChatMessage(
     )
     var showActionsSheet by remember { mutableStateOf(false) }
     var showSelectCopySheet by remember { mutableStateOf(false) }
+    // 手动往这条消息末尾追加一段空白内容
+    var showAddReasoning by remember { mutableStateOf(false) }
+    var showAddText by remember { mutableStateOf(false) }
     val navController = LocalNavController.current
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
@@ -340,7 +343,52 @@ fun ChatMessage(
             },
             onDismissRequest = {
                 showActionsSheet = false
-            }
+            },
+            // 只有助手消息、且这条消息的内容可以就地替换时才提供；生成中不提供，免得与流式写入打架
+            onAddReasoning = if (message.role == MessageRole.ASSISTANT && onReplaceParts != null && !loading) {
+                { showAddReasoning = true }
+            } else {
+                null
+            },
+            onAddText = if (message.role == MessageRole.ASSISTANT && onReplaceParts != null && !loading) {
+                { showAddText = true }
+            } else {
+                null
+            },
+        )
+    }
+
+    // 追加空白思考：先让用户写，写完非空才落进消息，取消就什么都不发生
+    if (showAddReasoning) {
+        ChatMessageReasoningEditDialog(
+            reasoning = UIMessagePart.Reasoning(reasoning = "", finishedAt = null),
+            onDismiss = { showAddReasoning = false },
+            onConfirm = { text ->
+                showAddReasoning = false
+                if (text.isNotBlank()) {
+                    onReplaceParts?.invoke(
+                        message.id,
+                        (message.parts + UIMessagePart.Reasoning(reasoning = text)).mergeAdjacentSameType(),
+                    )
+                }
+            },
+        )
+    }
+
+    // 追加空白正文：同上
+    if (showAddText) {
+        ChatMessageTextEditDialog(
+            text = "",
+            onDismiss = { showAddText = false },
+            onConfirm = { text ->
+                showAddText = false
+                if (text.isNotBlank()) {
+                    onReplaceParts?.invoke(
+                        message.id,
+                        (message.parts + UIMessagePart.Text(text)).mergeAdjacentSameType(),
+                    )
+                }
+            },
         )
     }
 

@@ -293,7 +293,11 @@ fun ChatMessageActionsSheet(
     isFavorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onWebViewPreview: () -> Unit,
-    onDismissRequest: () -> Unit
+    onDismissRequest: () -> Unit,
+    /** 往这条消息末尾追加一段空白思考，写完可以接着它续写 */
+    onAddReasoning: (() -> Unit)? = null,
+    /** 往这条消息末尾追加一段空白正文 */
+    onAddText: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -308,6 +312,13 @@ fun ChatMessageActionsSheet(
                 add(MessageSheetAction(HugeIcons.WebDesign01, stringResource(R.string.render_with_webview), onClick = onWebViewPreview))
             }
             add(MessageSheetAction(HugeIcons.Edit01, stringResource(R.string.edit), onClick = onEdit))
+            // 手动补一段空内容：思考用来从半截思路接着往下写，正文用来补写或占位
+            if (onAddReasoning != null) {
+                add(MessageSheetAction(HugeIcons.PlusSign, "添加一段思考", onClick = onAddReasoning))
+            }
+            if (onAddText != null) {
+                add(MessageSheetAction(HugeIcons.Add01, "添加一段正文", onClick = onAddText))
+            }
             add(MessageSheetAction(HugeIcons.Share04, stringResource(R.string.share), onClick = onShare))
             add(MessageSheetAction(HugeIcons.GitFork, stringResource(R.string.create_fork), onClick = onFork))
             if (onToggleFavorite != null) {
