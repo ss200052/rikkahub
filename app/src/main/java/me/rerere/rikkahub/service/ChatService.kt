@@ -38,6 +38,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
+import me.rerere.ai.ui.mergeAdjacentSameType
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -1845,7 +1846,13 @@ class ChatService(
         val settings = settingsStore.awaitLoaded()
 
         mutate(conversationId) { conversation ->
-            conversation.editMessage(messageId, parts.replaceUserRegexes(settings.getStoredAssistantOf(conversation)))
+            // 相邻的同类 part 先并回一段：续写会把正文切成两截，
+            // 不归并的话编辑框只取最后一段，前半截正文永远看不见也改不到。
+            conversation.editMessage(
+                messageId,
+                parts.replaceUserRegexes(settings.getStoredAssistantOf(conversation))
+                    .mergeAdjacentSameType(),
+            )
         }
     }
 

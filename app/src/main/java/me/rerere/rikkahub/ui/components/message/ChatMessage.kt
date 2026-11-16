@@ -70,6 +70,7 @@ import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.ui.mergeAdjacentSameType
 import me.rerere.ai.ui.isEmptyUIMessage
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.File02
@@ -210,7 +211,7 @@ fun ChatMessage(
                             part
                         }
                     }
-                    onReplaceParts?.invoke(message.id, newParts)
+                    onReplaceParts?.invoke(message.id, newParts.mergeAdjacentSameType())
                 }
             }
         val deleteReasoningCallback: ((UIMessagePart.Reasoning) -> Unit)? =
@@ -221,7 +222,7 @@ fun ChatMessage(
                     val newParts = message.parts.filterNot {
                         it is UIMessagePart.Reasoning && it.createdAt == target.createdAt
                     }
-                    onReplaceParts?.invoke(message.id, newParts)
+                    onReplaceParts?.invoke(message.id, newParts.mergeAdjacentSameType())
                 }
             }
 

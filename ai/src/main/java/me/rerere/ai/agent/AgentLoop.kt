@@ -16,6 +16,7 @@ import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.finishReasoning
+import me.rerere.ai.ui.mergeAdjacentSameType
 import me.rerere.ai.util.StreamIdleTimeoutException
 import me.rerere.ai.util.json
 import me.rerere.ai.util.withIdleTimeout
@@ -358,50 +359,10 @@ private fun UIMessage.withoutReasoningForContinuation(): UIMessage {
     return if (kept.isEmpty()) this else copy(parts = kept)
 }
 
-/**
- * 把相邻的同类 part 合回一段（正文并正文、思考并思考）。
- *
- * 续写时新的流会另起 part（Handler 不知道上一段对应哪个 id），于是消息里出现
- * 「前半截正文 / 后半截正文」两段。后果不只是渲染：编辑消息时只会取最后一段正文，
- * 前半截看不见；思考也会多出一张卡片。合并之后整条消息仍然只有一段思考、一段正文。
- *
- * 若中断正好发生在代码块里，前半截的围栏没闭合，Markdown 会把后面整段当成代码——同样靠合并解决。
- * 没有相邻同类 part 时原样返回，不做多余分配。
- */
+/** 消息级的合并入口，具体规则见 [mergeAdjacentSameType] */
 private fun UIMessage.mergedTextParts(): UIMessage {
-    var needsMerge = false
-    for (i in 1 until parts.size) {
-        val prev = parts[i - 1]
-        val next = parts[i]
-        if ((prev is UIMessagePart.Text && next is UIMessagePart.Text) ||
-            // 带签名 / 加密 metadata 的思考不能并：内容变了签名对不上，回传会被服务端拒绝
-            (prev is UIMessagePart.Reasoning && next is UIMessagePart.Reasoning &&
-                prev.metadata.isNullOrEmpty() && next.metadata.isNullOrEmpty())
-        ) {
-            needsMerge = true
-            break
-        }
-    }
-    if (!needsMerge) return this
-    val merged = ArrayList<UIMessagePart>(parts.size)
-    parts.forEach { part ->
-        val last = merged.lastOrNull()
-        when {
-            part is UIMessagePart.Text && last is UIMessagePart.Text ->
-                merged[merged.lastIndex] = last.copy(text = last.text + part.text)
-
-            // 带签名 / 加密 metadata 的思考不能并：内容变了签名对不上，回传会被服务端拒绝
-            part is UIMessagePart.Reasoning && last is UIMessagePart.Reasoning &&
-                last.metadata.isNullOrEmpty() && part.metadata.isNullOrEmpty() ->
-                merged[merged.lastIndex] = last.copy(
-                    reasoning = last.reasoning + part.reasoning,
-                    finishedAt = part.finishedAt ?: last.finishedAt,
-                )
-
-            else -> merged.add(part)
-        }
-    }
-    return copy(parts = merged)
+    val merged = parts.mergeAdjacentSameType()
+    return if (merged.size == parts.size) this else copy(parts = merged)
 }
 
 /** 消息里有没有非空正文；没有正文的续写要从思考接着往下写 */
