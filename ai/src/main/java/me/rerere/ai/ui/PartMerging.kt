@@ -37,11 +37,26 @@ fun List<UIMessagePart>.mergeAdjacentSameType(): List<UIMessagePart> {
                 merged[merged.lastIndex] = last.copy(text = last.text + part.text)
 
             part is UIMessagePart.Reasoning && last is UIMessagePart.Reasoning &&
-                last.metadata.isNullOrEmpty() && part.metadata.isNullOrEmpty() ->
+                last.metadata.isNullOrEmpty() && part.metadata.isNullOrEmpty() -> {
+                // 两段是分两次生成的。时长要按各自实际用时相加，不能拿后一段的结束时间
+                // 减前一段的开始时间——那中间隔着用户点继续之前的所有时间，会读成几分钟。
+                val firstEnd = last.finishedAt
+                val secondEnd = part.finishedAt
+                val total = if (firstEnd != null && secondEnd != null) {
+                    (firstEnd - last.createdAt) + (secondEnd - part.createdAt)
+                } else {
+                    null
+                }
                 merged[merged.lastIndex] = last.copy(
                     reasoning = last.reasoning + part.reasoning,
-                    finishedAt = part.finishedAt ?: last.finishedAt,
+                    createdAt = if (total != null && secondEnd != null) {
+                        secondEnd - total
+                    } else {
+                        last.createdAt
+                    },
+                    finishedAt = secondEnd ?: firstEnd,
                 )
+            }
 
             else -> merged.add(part)
         }

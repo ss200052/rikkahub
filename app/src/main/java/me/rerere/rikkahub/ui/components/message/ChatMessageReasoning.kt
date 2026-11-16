@@ -115,11 +115,14 @@ private fun rememberReasoningState(
                 state.expandState = ReasoningCardState.Preview
             scrollState.animateScrollTo(scrollState.maxValue)
         } else {
-            if (state.expandState.expanded) {
-                state.expandState = if (settings.displaySetting.autoCloseThinking)
+            // 只收起自动展开的预览态。用户自己点开的那种（Expanded）保持展开：
+            // 续写刚写完就把他正在看的内容收回去，再想展开还得重新找位置。
+            if (state.expandState == ReasoningCardState.Preview) {
+                state.expandState = if (settings.displaySetting.autoCloseThinking) {
                     ReasoningCardState.Collapsed
-                else
+                } else {
                     ReasoningCardState.Expanded
+                }
             }
         }
     }
