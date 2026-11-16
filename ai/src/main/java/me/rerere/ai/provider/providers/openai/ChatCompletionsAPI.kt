@@ -244,6 +244,19 @@ class ChatCompletionsAPI(
 
         Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
 
+        // 出错时能一眼看出服务端到底收到了什么
+        val requestSummary = buildString {
+            val array = requestBody["messages"]?.let { runCatching { it.jsonArray }.getOrNull() }
+            append("${array?.size ?: -1} 条消息 ")
+            array?.forEachIndexed { index, element ->
+                val obj = runCatching { element.jsonObject }.getOrNull() ?: return@forEachIndexed
+                val role = obj["role"]?.jsonPrimitive?.contentOrNull ?: "?"
+                val content = obj["content"]?.toString().orEmpty()
+                val reasoning = obj["reasoning_content"]?.toString().orEmpty()
+                append("#$index $role 内容${content.length}字/思考${reasoning.length}字; ")
+            }
+        }
+
         // just for debugging response body
         // println(client.newCall(request).await().body?.string())
 
@@ -293,6 +306,12 @@ class ChatCompletionsAPI(
                     e.printStackTrace()
                     exception = e
                 } finally {
+                    // 服务端说「输入为空」时，把它看到的 messages 结构一起报出来：
+                    // 光凭这句话分不清是我们真发了空数组，还是被自定义请求体覆盖掉了。
+                    val message = exception?.message.orEmpty()
+                    if (message.contains("empty input", ignoreCase = true)) {
+                        exception = Exception("$message\n［实际发送］$requestSummary")
+                    }
                     close(exception)
                 }
             }
@@ -332,7 +351,9 @@ class ChatCompletionsAPI(
         }
         val messagesJson = buildMessages(
             messages = effectiveMessages,
-            includeHistoryReasoning = providerSetting.includeHistoryReasoning,
+            // 续写必须带上要接着写的内容本身。关掉「回传历史思考」时，只剩思考的那条消息
+            // 会被整个丢掉，请求里一条都不剩，服务端只回一句 Empty input messages。
+            includeHistoryReasoning = prefixContinuation || providerSetting.includeHistoryReasoning,
             reasoningReplayFormat = when (host) {
                 "openrouter.ai" -> ReasoningReplayFormat.OPENROUTER_DETAILS
                 "api.mistral.ai" -> ReasoningReplayFormat.MISTRAL_THINKING_CHUNK
@@ -340,6 +361,18 @@ class ChatCompletionsAPI(
             },
             supportInputModalities = params.model.inputModalities,
         ).let { if (prefixContinuation) it.markLastAssistantAsPrefix() else it }
+        require(messagesJson.isNotEmpty()) {
+            val roles = effectiveMessages.joinToString(",") { it.role.name.lowercase() }
+            val detail = effectiveMessages.lastOrNull()?.parts?.joinToString("+") { part ->
+                when (part) {
+                    is UIMessagePart.Text -> "正文(${part.text.length}字)"
+                    is UIMessagePart.Reasoning -> "思考(${part.reasoning.length}字)"
+                    is UIMessagePart.Tool -> "工具"
+                    else -> part::class.simpleName ?: "?"
+                }
+            } ?: "无"
+            "没有可以发给模型的内容：共 ${messages.size} 条 [$roles]；末尾内容 = $detail"
+        }
         return buildJsonObject {
             put("model", params.model.modelId)
             put("messages", messagesJson)
