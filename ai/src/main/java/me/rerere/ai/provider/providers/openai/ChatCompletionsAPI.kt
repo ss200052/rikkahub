@@ -131,29 +131,34 @@ private fun JsonArray.markLastAssistantAsPrefix(): JsonArray {
  * 前者会报「tool_calls 后面必须跟 tool 消息」，后者结构对不上。
  * 所以两边一起去掉：调用的输出转成一条普通 user 文本，模型仍然知道查到过什么。
  */
-private fun List<UIMessage>.flattenToolCallsForContinuation(): List<UIMessage> = buildList {
-    forEachIndexed { index, message ->
-        val tools = message.getTools()
-        // 最后一条是待续写的前缀本身，保持原样
-        if (index == lastIndex || tools.isEmpty()) {
-            add(message)
-            return@forEachIndexed
-        }
-        val kept = message.parts.filterNot { it is UIMessagePart.Tool }
-        if (kept.isNotEmpty()) add(message.copy(parts = kept))
-        val resultText = tools.joinToString("\n\n") { tool ->
-            val output = tool.output.filterIsInstance<UIMessagePart.Text>()
-                .joinToString("") { it.text }
-                .trim()
-            "调用工具 ${tool.toolName}${if (output.isNotBlank()) "：$output" else ""}"
-        }
-        if (resultText.isNotBlank()) {
-            add(
-                UIMessage(
-                    role = MessageRole.USER,
-                    parts = listOf(UIMessagePart.Text("（此前的工具调用记录）\n$resultText")),
+private fun List<UIMessage>.flattenToolCallsForContinuation(): List<UIMessage> {
+    // buildList 的 lambda 自带一个 MutableList 接收者，直接写 forEachIndexed / lastIndex
+    // 用的都是那个新建的空列表，会把整串消息迭代成空。先绑一份外层列表再遍历。
+    val source = this
+    return buildList {
+        source.forEachIndexed { index, message ->
+            val tools = message.getTools()
+            // 最后一条是待续写的前缀本身，保持原样
+            if (index == source.lastIndex || tools.isEmpty()) {
+                add(message)
+                return@forEachIndexed
+            }
+            val kept = message.parts.filterNot { it is UIMessagePart.Tool }
+            if (kept.isNotEmpty()) add(message.copy(parts = kept))
+            val resultText = tools.joinToString("\n\n") { tool ->
+                val output = tool.output.filterIsInstance<UIMessagePart.Text>()
+                    .joinToString("") { it.text }
+                    .trim()
+                "调用工具 ${tool.toolName}${if (output.isNotBlank()) "：$output" else ""}"
+            }
+            if (resultText.isNotBlank()) {
+                add(
+                    UIMessage(
+                        role = MessageRole.USER,
+                        parts = listOf(UIMessagePart.Text("（此前的工具调用记录）\n$resultText")),
+                    )
                 )
-            )
+            }
         }
     }
 }
