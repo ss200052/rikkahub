@@ -288,7 +288,8 @@ class ChatVM(
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {
-        if (parts.isEmptyInputMessage()) return
+        // 只剩思考也算合法内容：删光正文后要让模型接着思考重写，这一步必须能存下来
+        if (parts.isEmpty()) return
         analytics.logEvent("ai_edit_message", null)
 
         viewModelScope.launch {

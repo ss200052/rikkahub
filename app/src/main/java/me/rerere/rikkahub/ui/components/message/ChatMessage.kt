@@ -12,12 +12,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -26,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
@@ -226,6 +229,17 @@ fun ChatMessage(
                 }
             }
 
+        // 删掉指定下标的 part：正文的一键清空走这里，按 parts 下标定位，避免同内容多段误删
+        val deletePartCallback: ((Int) -> Unit)? =
+            if (onReplaceParts == null) {
+                null
+            } else {
+                { index ->
+                    val remaining = message.parts.filterIndexed { i, _ -> i != index }
+                    onReplaceParts.invoke(message.id, remaining.mergeAdjacentSameType())
+                }
+            }
+
         CompositionLocalProvider(
             LocalTextStyle provides textStyle,
             LocalWorkspaceId provides assistant?.workspaceId?.toString(),
@@ -242,6 +256,7 @@ fun ChatMessage(
                 onUserMessageClick = if (message.role == MessageRole.USER) onEdit else null,
                 onEditReasoning = editReasoningCallback,
                 onDeleteReasoning = deleteReasoningCallback,
+                onDeletePart = deletePartCallback,
             )
 
             message.translation?.let { translation ->
@@ -356,6 +371,8 @@ private fun MessagePartsBlock(
     onUserMessageClick: (() -> Unit)? = null,
     onEditReasoning: ((UIMessagePart.Reasoning, String) -> Unit)? = null,
     onDeleteReasoning: ((UIMessagePart.Reasoning) -> Unit)? = null,
+    /** 删掉第 index 个 part（正文的一键清空） */
+    onDeletePart: ((Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 消息输出HapticFeedback
@@ -465,6 +482,7 @@ private fun MessagePartsBlock(
             is MessagePartBlock.ContentBlock -> key(block.index) {
                 when (val part = block.part) {
                     is UIMessagePart.Text -> {
+                        var showDeleteTextConfirm by remember(block.index) { mutableStateOf(false) }
                         // 只有正在生成的最后一段文字可能停在没写完的语法上
                         val streamingText = loading && block.index == parts.lastIndex
                         val textContent = @Composable {
@@ -523,6 +541,37 @@ private fun MessagePartsBlock(
                         // Markdown 由 BetterText 渲染，要用它自己的选择容器；生成中也可以选择
                         SelectableContent {
                             textContent()
+                        }
+
+                        // 一键删掉这段正文：删光正文后再续写，模型会接着现有的思考重写
+                        if (onDeletePart != null && !loading && role == MessageRole.ASSISTANT &&
+                            part.text.isNotBlank()
+                        ) {
+                            TextButton(
+                                onClick = { showDeleteTextConfirm = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            ) {
+                                Text("删除这段正文", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+
+                        if (showDeleteTextConfirm) {
+                            AlertDialog(
+                                onDismissRequest = { showDeleteTextConfirm = false },
+                                title = { Text("删除这段正文") },
+                                text = { Text("只删掉这一段正文，思考与其它部分不受影响。删光正文后再续写，模型会接着现有思考往下写。") },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            showDeleteTextConfirm = false
+                                            onDeletePart?.invoke(block.index)
+                                        },
+                                    ) { Text("删除") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showDeleteTextConfirm = false }) { Text("取消") }
+                                },
+                            )
                         }
                     }
 

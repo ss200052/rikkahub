@@ -1841,7 +1841,9 @@ class ChatService(
         messageId: Uuid,
         parts: List<UIMessagePart>
     ) {
-        if (parts.isEmptyInputMessage()) return
+        // 助手消息允许只剩思考：把正文删光、留前半段思维链让模型接着重写，靠的就是这个中间态。
+        // 用户消息仍然不能为空，那层校验在 Conversation.editMessage 里按角色做。
+        if (parts.isEmpty()) return
         if (blockIfBatchLocked(conversationId)) return
         val settings = settingsStore.awaitLoaded()
 

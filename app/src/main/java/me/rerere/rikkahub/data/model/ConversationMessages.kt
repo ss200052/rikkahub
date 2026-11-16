@@ -1,9 +1,11 @@
 package me.rerere.rikkahub.data.model
 
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.finishPendingTools
+import me.rerere.ai.ui.isEmptyInputMessage
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -30,6 +32,10 @@ internal fun Conversation.deleteMessage(messageId: Uuid): Conversation? {
 internal fun Conversation.editMessage(messageId: Uuid, parts: List<UIMessagePart>): Conversation {
     val node = getMessageNodeByMessageId(messageId) ?: return this
     val original = node.messages.first { it.id == messageId }
+    // 用户消息必须有正文或附件；助手消息允许只剩思考——「删光正文、留前半段思维链接着重写」
+    // 就是这个状态，思考不算输入内容，不能用 isEmptyInputMessage 一刀切
+    if (original.role == MessageRole.USER && parts.isEmptyInputMessage()) return this
+    if (parts.isEmpty()) return this
     val edited = if (original.isContextCheckpoint) {
         // 摘要原地改写：新建分支会丢掉检查点标记，删除摘要时还会露出旧版本。
         original.copy(parts = parts)
