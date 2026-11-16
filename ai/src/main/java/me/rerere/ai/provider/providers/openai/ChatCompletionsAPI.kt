@@ -545,9 +545,10 @@ class ChatCompletionsAPI(
         for (group in groups) {
             when (group) {
                 is PartGroup.Content -> {
-                    // 从当前 group 中提取 reasoning（保持顺序）
+                    // 从当前 group 中提取 reasoning。同一组里可能有多段（手动补的思考段会追加在后面），
+                    // 续写要接着最后那段思路往下写，所以取最后一个而不是第一个
                     if (includeReasoning) {
-                        group.parts.filterIsInstance<UIMessagePart.Reasoning>().firstOrNull()?.let {
+                        group.parts.filterIsInstance<UIMessagePart.Reasoning>().lastOrNull()?.let {
                             reasoningPart = it
                         }
                     }
