@@ -45,11 +45,13 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Edit01
+import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.FavouriteCircle
 import me.rerere.hugeicons.stroke.GitFork
 import me.rerere.hugeicons.stroke.ArrowTurnBackward
 import me.rerere.hugeicons.stroke.Layers01
 import me.rerere.hugeicons.stroke.MoreVertical
+import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.Refresh03
 import me.rerere.hugeicons.stroke.Share04
 import me.rerere.hugeicons.stroke.StopCircle
@@ -314,10 +316,10 @@ fun ChatMessageActionsSheet(
             add(MessageSheetAction(HugeIcons.Edit01, stringResource(R.string.edit), onClick = onEdit))
             // 手动补一段空内容：思考用来从半截思路接着往下写，正文用来补写或占位
             if (onAddReasoning != null) {
-                add(MessageSheetAction(HugeIcons.PlusSign, "添加一段思考", onClick = onAddReasoning))
+                add(MessageSheetAction(HugeIcons.Edit02, "添加一段思考", onClick = onAddReasoning))
             }
             if (onAddText != null) {
-                add(MessageSheetAction(HugeIcons.Add01, "添加一段正文", onClick = onAddText))
+                add(MessageSheetAction(HugeIcons.PlusSign, "添加一段正文", onClick = onAddText))
             }
             add(MessageSheetAction(HugeIcons.Share04, stringResource(R.string.share), onClick = onShare))
             add(MessageSheetAction(HugeIcons.GitFork, stringResource(R.string.create_fork), onClick = onFork))
