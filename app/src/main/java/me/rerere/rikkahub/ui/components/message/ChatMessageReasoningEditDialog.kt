@@ -4,9 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -59,9 +57,13 @@ fun ChatMessageReasoningEditDialog(
         title = { Text(stringResource(R.string.chat_input_edit_reasoning)) },
         text = {
             Column(
+                // 这里不能再套 verticalScroll：输入框拿到焦点时会请求「让光标可见」，
+                // 那个请求会冒泡到外层滚动容器，把输入框顶部对齐到视口顶部——
+                // 表现就是点一下文本，整片内容跳回开头。
+                // 所以外层不滚动，高度在这里定死，输入框用 weight 拿剩下的空间自己滚。
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .heightIn(min = 200.dp, max = 400.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (slices.size > 1) {
@@ -91,11 +93,11 @@ fun ChatMessageReasoningEditDialog(
                 OutlinedTextField(
                     value = edits[safeIndex] ?: slices[safeIndex],
                     onValueChange = { edits[safeIndex] = it },
-                    // 固定高度交给输入框自己滚动：外面那层 verticalScroll 会
-                    // 给它无限高度约束，是数万字时卡死的根源
+                    // 高度由外层 Column 的 heightIn 决定，这里拿剩余空间；
+                    // 内容超出时是输入框自己内部滚动，外层没有任何可滚动容器参与
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(320.dp),
+                        .weight(1f),
                     label = { Text(stringResource(R.string.chat_input_edit_reasoning)) },
                     singleLine = false,
                 )

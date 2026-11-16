@@ -74,6 +74,55 @@ import kotlin.time.Clock
 
 private const val TAG = "ChatCompletionsAPI"
 
+/**
+ * 结尾是一条助手消息，说明这次请求是在接着它往下写。
+ */
+private fun List<UIMessage>.isContinuationRequest(): Boolean =
+    lastOrNull()?.role == MessageRole.ASSISTANT
+
+/**
+ * DeepSeek 的前缀续写只在 /beta 上提供：把 baseUrl 末尾的 /v1 换成 /beta。
+ * 别的服务商返回 null，续写退回原来的地址与行为。
+ */
+private fun ProviderSetting.OpenAI.betaBaseUrlOrNull(): String? {
+    val host = runCatching { baseUrl.toHttpUrl().host.lowercase() }.getOrNull() ?: return null
+    if (host != "api.deepseek.com") return null
+    val trimmed = baseUrl.trimEnd('/')
+    return if (trimmed.endsWith("/v1")) {
+        trimmed.dropLast("/v1".length) + "/beta"
+    } else {
+        "$trimmed/beta"
+    }
+}
+
+/**
+ * 续写请求走 beta 地址，其余请求仍用原地址。
+ *
+ * 不这么做的话，服务端拿到一条末尾的助手消息只能自己猜：猜成「历史里助手说过的话」，
+ * 就等于这道题已经答过，模型会从头重新组织一遍，用户看到的就是「点了继续却重写」。
+ */
+private fun resolveChatCompletionsUrl(
+    providerSetting: ProviderSetting.OpenAI,
+    messages: List<UIMessage>,
+): String {
+    val betaBase = if (messages.isContinuationRequest()) {
+        providerSetting.betaBaseUrlOrNull()
+    } else {
+        null
+    }
+    return "${betaBase ?: providerSetting.baseUrl}${providerSetting.chatCompletionsPath}"
+}
+
+/**
+ * 给最后一条助手消息打上 `prefix: true`，声明「这条是半截，请接着它写」。
+ * 只有打了这个标记，模型才会强制以前缀内容开头，而不是重新作答。
+ */
+private fun JsonArray.markLastAssistantAsPrefix(): JsonArray {
+    val last = lastOrNull()?.jsonObjectOrNull ?: return this
+    if (last["role"]?.jsonPrimitive?.contentOrNull != "assistant") return this
+    return JsonArray(dropLast(1) + JsonObject(last + mapOf("prefix" to JsonPrimitive(true))))
+}
+
 class ChatCompletionsAPI(
     private val client: OkHttpClient,
     private val keyRoulette: KeyRoulette
@@ -91,7 +140,7 @@ class ChatCompletionsAPI(
             )
 
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+            .url(resolveChatCompletionsUrl(providerSetting, messages))
             .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader(
@@ -146,7 +195,7 @@ class ChatCompletionsAPI(
         )
 
         val request = Request.Builder()
-            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+            .url(resolveChatCompletionsUrl(providerSetting, messages))
             .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
             .addHeader(
@@ -236,21 +285,23 @@ class ChatCompletionsAPI(
     ): JsonObject {
         val host = providerSetting.baseUrl.toHttpUrl().host
         val isOpenRouter = host == "openrouter.ai"
+        // 续写请求：末尾那条助手消息要标成 prefix，服务端才会接着它写而不是重新作答。
+        // 只有 DeepSeek 的 beta 接口认这个字段，别的服务商保持原样。
+        val prefixContinuation =
+            messages.isContinuationRequest() && providerSetting.betaBaseUrlOrNull() != null
+        val messagesJson = buildMessages(
+            messages = messages,
+            includeHistoryReasoning = providerSetting.includeHistoryReasoning,
+            reasoningReplayFormat = when (host) {
+                "openrouter.ai" -> ReasoningReplayFormat.OPENROUTER_DETAILS
+                "api.mistral.ai" -> ReasoningReplayFormat.MISTRAL_THINKING_CHUNK
+                else -> ReasoningReplayFormat.REASONING_CONTENT
+            },
+            supportInputModalities = params.model.inputModalities,
+        ).let { if (prefixContinuation) it.markLastAssistantAsPrefix() else it }
         return buildJsonObject {
             put("model", params.model.modelId)
-            put(
-                "messages",
-                buildMessages(
-                    messages = messages,
-                    includeHistoryReasoning = providerSetting.includeHistoryReasoning,
-                    reasoningReplayFormat = when (host) {
-                        "openrouter.ai" -> ReasoningReplayFormat.OPENROUTER_DETAILS
-                        "api.mistral.ai" -> ReasoningReplayFormat.MISTRAL_THINKING_CHUNK
-                        else -> ReasoningReplayFormat.REASONING_CONTENT
-                    },
-                    supportInputModalities = params.model.inputModalities,
-                )
-            )
+            put("messages", messagesJson)
 
             if (isModelAllowTemperature(params.model)) {
                 if (params.temperature != null) put("temperature", params.temperature)
