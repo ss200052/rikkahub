@@ -626,6 +626,10 @@ private fun ChatPageContent(
                 onUpdateMessage = { newNode ->
                     vm.selectMessageNode(newNode.id, newNode.selectIndex)
                 },
+                // 改/删思考段必须真正落库：onUpdateMessage 只切分支索引，不保存内容
+                onReplaceMessageParts = { messageId, parts ->
+                    vm.handleMessageEdit(parts, messageId)
+                },
                 onClickSuggestion = { suggestion ->
                     inputState.editingMessage = null
                     inputState.setMessageText(suggestion)

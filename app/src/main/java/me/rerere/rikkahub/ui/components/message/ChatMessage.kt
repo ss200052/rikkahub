@@ -103,6 +103,7 @@ import me.rerere.ui.charts.ChartSpec
 import me.rerere.ui.webview.WebViewContentCache
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.uuid.Uuid
 
 @Composable
 fun ChatMessage(
@@ -118,6 +119,13 @@ fun ChatMessage(
     onShare: () -> Unit,
     onDelete: () -> Unit,
     onUpdate: (MessageNode) -> Unit,
+    /**
+     * 就地替换某条消息的 parts（改思考、删思考）。
+     *
+     * 不能走 [onUpdate]：那个回调在上层只用来切换分支索引，不保存内容，
+     * parts 传上去会被直接丢掉，表现为「删除/修改没用」。
+     */
+    onReplaceParts: ((Uuid, List<UIMessagePart>) -> Unit)? = null,
     isFavorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
@@ -202,10 +210,7 @@ fun ChatMessage(
                             part
                         }
                     }
-                    val newMessages = node.messages.toMutableList().also { messages ->
-                        messages[node.selectIndex] = message.copy(parts = newParts)
-                    }
-                    onUpdate(node.copy(messages = newMessages))
+                    onReplaceParts?.invoke(message.id, newParts)
                 }
             }
         val deleteReasoningCallback: ((UIMessagePart.Reasoning) -> Unit)? =
@@ -216,10 +221,7 @@ fun ChatMessage(
                     val newParts = message.parts.filterNot {
                         it is UIMessagePart.Reasoning && it.createdAt == target.createdAt
                     }
-                    val newMessages = node.messages.toMutableList().also { messages ->
-                        messages[node.selectIndex] = message.copy(parts = newParts)
-                    }
-                    onUpdate(node.copy(messages = newMessages))
+                    onReplaceParts?.invoke(message.id, newParts)
                 }
             }
 
