@@ -123,6 +123,41 @@ private fun JsonArray.markLastAssistantAsPrefix(): JsonArray {
     return JsonArray(dropLast(1) + JsonObject(last + mapOf("prefix" to JsonPrimitive(true))))
 }
 
+/**
+ * 续写前把历史里的工具调用压平成普通文本。
+ *
+ * 服务端拒绝「带 prefix 又带 function call」的请求（*Function call should not be used with prefix*），
+ * 历史里只要出现过一次工具往返就整条请求作废；而只删结果或只删 tool_calls 也不成立——
+ * 前者会报「tool_calls 后面必须跟 tool 消息」，后者结构对不上。
+ * 所以两边一起去掉：调用的输出转成一条普通 user 文本，模型仍然知道查到过什么。
+ */
+private fun List<UIMessage>.flattenToolCallsForContinuation(): List<UIMessage> = buildList {
+    forEachIndexed { index, message ->
+        val tools = message.getTools()
+        // 最后一条是待续写的前缀本身，保持原样
+        if (index == lastIndex || tools.isEmpty()) {
+            add(message)
+            return@forEachIndexed
+        }
+        val kept = message.parts.filterNot { it is UIMessagePart.Tool }
+        if (kept.isNotEmpty()) add(message.copy(parts = kept))
+        val resultText = tools.joinToString("\n\n") { tool ->
+            val output = tool.output.filterIsInstance<UIMessagePart.Text>()
+                .joinToString("") { it.text }
+                .trim()
+            "调用工具 ${tool.toolName}${if (output.isNotBlank()) "：$output" else ""}"
+        }
+        if (resultText.isNotBlank()) {
+            add(
+                UIMessage(
+                    role = MessageRole.USER,
+                    parts = listOf(UIMessagePart.Text("（此前的工具调用记录）\n$resultText")),
+                )
+            )
+        }
+    }
+}
+
 class ChatCompletionsAPI(
     private val client: OkHttpClient,
     private val keyRoulette: KeyRoulette
@@ -289,8 +324,14 @@ class ChatCompletionsAPI(
         // 只有 DeepSeek 的 beta 接口认这个字段，别的服务商保持原样。
         val prefixContinuation =
             messages.isContinuationRequest() && providerSetting.betaBaseUrlOrNull() != null
+        // 续写时历史里的工具往返要压平，否则服务端直接拒收这条 prefix 请求
+        val effectiveMessages = if (prefixContinuation) {
+            messages.flattenToolCallsForContinuation()
+        } else {
+            messages
+        }
         val messagesJson = buildMessages(
-            messages = messages,
+            messages = effectiveMessages,
             includeHistoryReasoning = providerSetting.includeHistoryReasoning,
             reasoningReplayFormat = when (host) {
                 "openrouter.ai" -> ReasoningReplayFormat.OPENROUTER_DETAILS
@@ -477,7 +518,13 @@ class ChatCompletionsAPI(
                 }
             }
 
-            if (params.model.abilities.contains(ModelAbility.TOOL) && params.tools.isNotEmpty()) {
+            // 续写（prefix）与函数调用互斥：带上 tools 时服务端直接拒收
+            // （Function call should not be used with prefix）。续写本来就是把话接着说下去，
+            // 不需要调工具，所以这一轮干脆不下发工具定义。
+            if (!prefixContinuation &&
+                params.model.abilities.contains(ModelAbility.TOOL) &&
+                params.tools.isNotEmpty()
+            ) {
                 putJsonArray("tools") {
                     params.tools.forEach { tool ->
                         add(buildJsonObject {
