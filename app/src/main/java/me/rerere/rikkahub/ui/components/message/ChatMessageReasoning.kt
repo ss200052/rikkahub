@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -43,6 +45,7 @@ import kotlinx.coroutines.isActive
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Edit02
 import me.rerere.hugeicons.stroke.Idea01
 import me.rerere.rikkahub.R
@@ -84,9 +87,18 @@ private class ReasoningState(
 }
 
 @Composable
-private fun rememberReasoningState(reasoning: UIMessagePart.Reasoning): Pair<ReasoningState, Boolean> {
+private fun rememberReasoningState(
+    reasoning: UIMessagePart.Reasoning,
+    /**
+     * 这一轮是否真的还在生成。
+     *
+     * 只看 `finishedAt == null` 不够：进程被杀之后这条消息永远等不到 finishedAt，
+     * 界面就会一直读秒、shimmer 不停，而实际上早就没有流在跑。
+     */
+    generating: Boolean,
+): Pair<ReasoningState, Boolean> {
     val settings = LocalSettings.current
-    val loading = reasoning.finishedAt == null
+    val loading = reasoning.finishedAt == null && generating
     val scrollState = rememberScrollState()
 
     val state = remember(reasoning.createdAt) {
@@ -201,13 +213,17 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
     assistant: Assistant?,
     fadeHeight: Float = 64f,
     collapsedAdaptiveWidth: Boolean = false,
+    /** 这条消息这一轮是否还在生成；为 false 时即便没写 finishedAt 也不再读秒 */
+    generating: Boolean = false,
     onEditReasoning: ((UIMessagePart.Reasoning, String) -> Unit)? = null,
+    onDeleteReasoning: ((UIMessagePart.Reasoning) -> Unit)? = null,
 ) {
-    val (state, loading) = rememberReasoningState(reasoning)
+    val (state, loading) = rememberReasoningState(reasoning, generating)
     val thinkingTitle = reasoning.reasoning.extractThinkingTitle()
     val showThinkingTitle = loading && thinkingTitle != null
     val chatFontFamily = LocalTextStyle.current.fontFamily
     var showEditDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     ControlledChainOfThoughtStep(
         expanded = state.expandState == ReasoningCardState.Expanded,
@@ -259,6 +275,20 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
                         )
                     }
                 }
+                // 删除这一段思考：续写会追加出第二段思考，那一段往往并不想要
+                if (onDeleteReasoning != null && !loading) {
+                    IconButton(
+                        onClick = { showDeleteConfirm = true },
+                        modifier = Modifier.size(22.dp),
+                    ) {
+                        Icon(
+                            imageVector = HugeIcons.Delete01,
+                            contentDescription = "删除这段思考",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
+                }
             }
         },
         collapsedAdaptiveWidth = collapsedAdaptiveWidth,
@@ -274,6 +304,25 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
             )
         },
     )
+
+    if (showDeleteConfirm && onDeleteReasoning != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除这段思考") },
+            text = { Text("只删掉这一段思考内容，回复正文与其它部分不受影响。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteReasoning(reasoning)
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            },
+        )
+    }
 
     if (showEditDialog && onEditReasoning != null) {
         ChatMessageReasoningEditDialog(

@@ -621,24 +621,26 @@ class ChatVM(
     /**
      * 盯余额计算本批消耗。
      *
-     * 只累计「下降」的部分：中途充值会让余额上涨，若直接用「初始 - 当前」会把充值冲抵掉，
-     * 所以每次只把相邻两次的下降量加进去，上涨只更新基准、不计入。
+     * 消耗 = 起始余额 − 历史最低余额。
+     *
+     * 不逐段累加：某次查询若拿到偏高的旧值（接口滞后、重试命中缓存），基准就被抬高，
+     * 下一次真实下降算出的差值会把这段虚高一起算进去，而加法累积后永远不会回退。
+     * 只跟最低点比就能避开这个问题——偏高的抖动不影响结果；中途充值让余额回升时，
+     * 最低点不变，也不会被充值的涨幅冲抵掉。
      */
     private fun startSpendTracking() {
         if (spendTrackingJob?.isActive == true) return
         _batchSpent.value = java.math.BigDecimal.ZERO
         spendTrackingJob = viewModelScope.launch {
-            var lastBalance: java.math.BigDecimal? = null
-            var spent = java.math.BigDecimal.ZERO
+            var initial: java.math.BigDecimal? = null
+            var lowest: java.math.BigDecimal? = null
             while (isActive) {
                 val balance = queryBalance()
                 if (balance != null) {
-                    val previous = lastBalance
-                    if (previous != null && balance < previous) {
-                        spent = spent.add(previous.subtract(balance))
-                        _batchSpent.value = spent
-                    }
-                    lastBalance = balance
+                    val start = initial ?: balance.also { initial = it }
+                    val floor = lowest?.let { minOf(it, balance) } ?: balance
+                    lowest = floor
+                    _batchSpent.value = start.subtract(floor).max(java.math.BigDecimal.ZERO)
                 }
                 delay(5_000)
             }

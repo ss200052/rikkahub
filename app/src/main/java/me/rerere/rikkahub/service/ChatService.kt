@@ -720,7 +720,12 @@ class ChatService(
                     reportFailure(session, e, R.string.error_title_regenerate_message)
                 }
             }
-            job.start()
+            // 必须登记到会话的任务槽：界面靠 session.generationJob 判断「正在生成」，
+            // 漏掉这一步的话续写期间发送按钮不会变成停止按钮，既看不出在跑也拦不住，
+            // 「继续生成」还会因为 loadingJob 为 null 被反复触发。
+            // cancelPrevious = false：下面的 runTurn 开头会 join 上一个任务，
+            // 直接取消它会把「等前一轮写完再续」变成「抢跑」。setJob 内部会 start。
+            session.setJob(job, cancelPrevious = false)
         }
     }
 

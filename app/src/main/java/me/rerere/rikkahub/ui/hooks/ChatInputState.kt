@@ -182,6 +182,10 @@ class ChatInputState {
  *
  * 编辑消息（官方入口）与思考卡片上的就地编辑共用这一份判断，两边限制不会漂移。
  */
+/** 这一段思考能不能就地改或删：没有签名 / 加密 metadata 才行，带了回传会被拒 */
+internal fun UIMessagePart.isEditableReasoning(): Boolean =
+    this is UIMessagePart.Reasoning && metadata.isNullOrEmpty()
+
 internal fun List<UIMessagePart>.entriesEditableReasoningOrNull(): UIMessagePart.Reasoning? {
     if (!all { it is UIMessagePart.Text || it is UIMessagePart.Reasoning }) return null
     val reasoning = filterIsInstance<UIMessagePart.Reasoning>().singleOrNull() ?: return null

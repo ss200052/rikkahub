@@ -201,6 +201,15 @@ val LaneState.isInspectable: Boolean
     get() = this is LaneState.Hit || this is LaneState.Clean ||
         this is LaneState.Truncated || this is LaneState.Cancelled
 
+/**
+ * 已是终态：这一路不会再自己往下变，可以重跑。
+ *
+ * 和 [isInspectable] 不是一回事——失败的路没有内容可查看，但它同样是终态。
+ * 批次是否结束、能不能重跑都该看这个，而不是看有没有内容。
+ */
+val LaneState.isTerminal: Boolean
+    get() = this !is LaneState.Running && this !is LaneState.Idle
+
 /** 一路产出的可落盘内容 */
 val LaneState.resultMessage: UIMessage?
     get() = when (this) {
@@ -264,13 +273,14 @@ data class BatchSession(
     fun lane(index: Int): LaneState? = lanes.getOrNull(index)
 
     val runningCount: Int get() = lanes.count { it is LaneState.Running || it is LaneState.Idle }
-    val finishedCount: Int get() = lanes.count { it.isInspectable }
+    /** 已结束的路数：失败也算结束，否则有失败路时进度永远差一格 */
+    val finishedCount: Int get() = lanes.count { it.isTerminal }
     val hitCount: Int get() = lanes.count { it is LaneState.Hit }
 
     /** 写入某一路的最新状态；重跑某一路会让整批重新回到未完成状态 */
     fun withLane(state: LaneState): BatchSession {
         val updated = lanes.toMutableList().also { it[state.index] = state }
-        return copy(lanes = updated, finished = updated.all { it.isInspectable })
+        return copy(lanes = updated, finished = updated.all { it.isTerminal })
     }
 }
 

@@ -92,7 +92,7 @@ import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.modifier.shimmer
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalWorkspaceId
-import me.rerere.rikkahub.ui.hooks.entriesEditableReasoningOrNull
+import me.rerere.rikkahub.ui.hooks.isEditableReasoning
 import me.rerere.rikkahub.ui.theme.LocalChatFontFamily
 import me.rerere.rikkahub.ui.theme.rememberChatFontFamily
 import me.rerere.rikkahub.utils.JsonInstant
@@ -187,6 +187,42 @@ fun ChatMessage(
                 )
             }
         }
+        // 逐段判断：任何一段没有签名/加密 metadata 的思考都能就地改或删。
+        // 以前要求「整条消息只有一段思考」，续写追加第二段之后整条消息的入口就全没了。
+        val hasEditableReasoning = message.parts.any { it.isEditableReasoning() }
+        val editReasoningCallback: ((UIMessagePart.Reasoning, String) -> Unit)? =
+            if (!hasEditableReasoning) {
+                null
+            } else {
+                { target, newText ->
+                    val newParts = message.parts.map { part ->
+                        if (part is UIMessagePart.Reasoning && part.createdAt == target.createdAt) {
+                            part.copy(reasoning = newText)
+                        } else {
+                            part
+                        }
+                    }
+                    val newMessages = node.messages.toMutableList().also { messages ->
+                        messages[node.selectIndex] = message.copy(parts = newParts)
+                    }
+                    onUpdate(node.copy(messages = newMessages))
+                }
+            }
+        val deleteReasoningCallback: ((UIMessagePart.Reasoning) -> Unit)? =
+            if (!hasEditableReasoning) {
+                null
+            } else {
+                { target ->
+                    val newParts = message.parts.filterNot {
+                        it is UIMessagePart.Reasoning && it.createdAt == target.createdAt
+                    }
+                    val newMessages = node.messages.toMutableList().also { messages ->
+                        messages[node.selectIndex] = message.copy(parts = newParts)
+                    }
+                    onUpdate(node.copy(messages = newMessages))
+                }
+            }
+
         CompositionLocalProvider(
             LocalTextStyle provides textStyle,
             LocalWorkspaceId provides assistant?.workspaceId?.toString(),
@@ -201,22 +237,8 @@ fun ChatMessage(
                 onToolApproval = onToolApproval,
                 onToolAnswer = onToolAnswer,
                 onUserMessageClick = if (message.role == MessageRole.USER) onEdit else null,
-                // 与官方「编辑消息」共用同一份可编辑判断：单段思考、且不带签名/加密 metadata 才给入口
-                onEditReasoning = message.parts.entriesEditableReasoningOrNull()?.let {
-                    { target, newText ->
-                        val newParts = message.parts.map { part ->
-                            if (part is UIMessagePart.Reasoning && part.createdAt == target.createdAt) {
-                                part.copy(reasoning = newText)
-                            } else {
-                                part
-                            }
-                        }
-                        val newMessages = node.messages.toMutableList().also { messages ->
-                            messages[node.selectIndex] = message.copy(parts = newParts)
-                        }
-                        onUpdate(node.copy(messages = newMessages))
-                    }
-                },
+                onEditReasoning = editReasoningCallback,
+                onDeleteReasoning = deleteReasoningCallback,
             )
 
             message.translation?.let { translation ->
@@ -330,6 +352,7 @@ private fun MessagePartsBlock(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onUserMessageClick: (() -> Unit)? = null,
     onEditReasoning: ((UIMessagePart.Reasoning, String) -> Unit)? = null,
+    onDeleteReasoning: ((UIMessagePart.Reasoning) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 消息输出HapticFeedback
@@ -398,7 +421,11 @@ private fun MessagePartsBlock(
                                         model = model,
                                         assistant = assistant,
                                         collapsedAdaptiveWidth = isReasoningOnlyBlock,
+                                        // 轮到这一步时消息可能已经不在生成了（例如进程被杀后重进），
+                                        // 光看 finishedAt 会让它一直读秒
+                                        generating = loading,
                                         onEditReasoning = onEditReasoning,
+                                        onDeleteReasoning = onDeleteReasoning,
                                     )
                                 }
                             }

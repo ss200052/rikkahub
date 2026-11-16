@@ -181,7 +181,8 @@ class BatchGenerationController(
         val factory = laneFactory ?: return
         val current = _session.value ?: return
         val lane = current.lane(index) ?: return
-        if (!lane.isInspectable) return
+        // 只有还在跑或还没开始的路才拒绝；失败的路同样必须能重跑
+        if (!lane.isTerminal) return
 
         val runId = current.runId
         laneJobs[index]?.cancel()
@@ -282,7 +283,7 @@ class BatchGenerationController(
             val settled = current.lanes.map { lane ->
                 if (lane is LaneState.Running) LaneState.Cancelled(lane.index, null) else lane
             }
-            current.copy(lanes = settled, finished = settled.all { it.isInspectable })
+            current.copy(lanes = settled, finished = settled.all { it.isTerminal })
         }
         batchJob?.cancel()
         // 重跑启动的 job 不在 batchJob 层级里，单独停

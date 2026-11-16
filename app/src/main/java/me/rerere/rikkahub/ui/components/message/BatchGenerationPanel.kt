@@ -170,6 +170,9 @@ fun BatchGenerationPanel(
                             ProviderQuotaText(
                                 providerSetting = quotaProvider,
                                 style = MaterialTheme.typography.labelSmall,
+                                // 复用上面那条 5 秒轮询的结果。不传的话它会自己再查一次，
+                                // 而那条走的是 2 分钟缓存且从不重查，余额会永远停在打开面板那一刻
+                                quotaResult = quotaResult,
                             )
                             batchSpent?.let { spent ->
                                 Text(

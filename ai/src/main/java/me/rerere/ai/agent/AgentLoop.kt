@@ -7,6 +7,7 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.core.sum
 import me.rerere.ai.provider.TextGenerationParams
@@ -105,8 +106,25 @@ internal class AgentLoop(
     private suspend fun generateStep() {
         appendPendingParts()
         val current = message
-        val step = hooks.prepareStep(if (current == null) history else history + current)
-        val params = step.params.copy(tools = request.tools)
+        // 接着一条已有回复往下写时，只把正文（和工具结果）当前缀，把上一次的思考剥掉。
+        // 否则模型看到 assistant 消息里已经带着 reasoning，会理解成「上一轮思考还没写完」，
+        // 于是从头重想一遍，而不是接着已有正文继续写——用户看到的就是「续写从重跑思维链开始」。
+        val prefix = if (firstStepContinuesExisting) {
+            current?.withoutReasoningForContinuation()
+        } else {
+            current
+        }
+        val step = hooks.prepareStep(if (prefix == null) history else history + prefix)
+        // 接着已有正文续写时关掉思考：模型该做的是把正文往下写，
+        // 再给它开着思考只会从头想一遍，续写出来的东西又要多出一段思考卡片。
+        val params = step.params.copy(
+            tools = request.tools,
+            reasoningLevel = if (firstStepContinuesExisting && current?.hasTextContent() == true) {
+                ReasoningLevel.OFF
+            } else {
+                step.params.reasoningLevel
+            },
+        )
         // 只带着追加内容创建的消息还没有模型 id
         val base = current?.let { it.copy(modelId = it.modelId ?: params.model.id) } ?: UIMessage(
             role = MessageRole.ASSISTANT,
@@ -121,7 +139,10 @@ internal class AgentLoop(
         } else {
             generate(step.messages, params, base, countStep)
         }
-        update(hooks.finishStep(generated, newPartsFrom = base.parts.size).copy(finishedAt = now()))
+        // 输出变换按 base.parts.size 定位新内容，必须拿未合并的结构；
+        // 变换完成后再把相邻的正文/思考并回一段，消息里就只剩一段思考、一段正文。
+        val finished = hooks.finishStep(generated, newPartsFrom = base.parts.size).copy(finishedAt = now())
+        update(finished.mergedTextParts())
     }
 
     // 续写普通回复时最后一个 part 不是执行完的工具或通知，这时追加会把续写变成新的一轮
@@ -194,8 +215,7 @@ internal class AgentLoop(
                     interrupted = attempt
                     throw e
                 }
-                attempt.mergedTextParts()
-                    .withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO, countStep)
+                attempt.withStepStats(base, firstChunk?.elapsedNow() ?: Duration.ZERO, countStep)
             }
         } catch (e: StreamChunkHandlingException) {
             throw e.cause
@@ -326,16 +346,38 @@ private fun UIMessage.withStepStats(stepBase: UIMessage, stepTime: Duration, cou
 private fun now() = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
 
 /**
- * 把相邻的文本 part 合回一段。
+ * 续写时给模型看的前缀：去掉思考，只留正文与工具结果。
  *
- * 空闲超时后用已有内容续写时，新的文本流会另起一个文本 part（Handler 不知道上一段对应哪个 id），
- * 渲染出来就是「前半截 / 后半截」两段。若中断正好发生在代码块里，前半截的围栏没闭合，
- * Markdown 会把后面整段当成代码。没有相邻文本时原样返回，不做多余分配。
+ * 只剩思考、还没有正文时原样返回——那种情况下模型确实需要把正文补出来，
+ * 把思考也拿掉反而会让它没有任何上下文可接。
+ */
+private fun UIMessage.withoutReasoningForContinuation(): UIMessage {
+    val hasText = parts.any { it is UIMessagePart.Text && it.text.isNotBlank() }
+    if (!hasText) return this
+    val kept = parts.filterNot { it is UIMessagePart.Reasoning }
+    return if (kept.isEmpty()) this else copy(parts = kept)
+}
+
+/**
+ * 把相邻的同类 part 合回一段（正文并正文、思考并思考）。
+ *
+ * 续写时新的流会另起 part（Handler 不知道上一段对应哪个 id），于是消息里出现
+ * 「前半截正文 / 后半截正文」两段。后果不只是渲染：编辑消息时只会取最后一段正文，
+ * 前半截看不见；思考也会多出一张卡片。合并之后整条消息仍然只有一段思考、一段正文。
+ *
+ * 若中断正好发生在代码块里，前半截的围栏没闭合，Markdown 会把后面整段当成代码——同样靠合并解决。
+ * 没有相邻同类 part 时原样返回，不做多余分配。
  */
 private fun UIMessage.mergedTextParts(): UIMessage {
     var needsMerge = false
     for (i in 1 until parts.size) {
-        if (parts[i - 1] is UIMessagePart.Text && parts[i] is UIMessagePart.Text) {
+        val prev = parts[i - 1]
+        val next = parts[i]
+        if ((prev is UIMessagePart.Text && next is UIMessagePart.Text) ||
+            // 带签名 / 加密 metadata 的思考不能并：内容变了签名对不上，回传会被服务端拒绝
+            (prev is UIMessagePart.Reasoning && next is UIMessagePart.Reasoning &&
+                prev.metadata.isNullOrEmpty() && next.metadata.isNullOrEmpty())
+        ) {
             needsMerge = true
             break
         }
@@ -344,11 +386,24 @@ private fun UIMessage.mergedTextParts(): UIMessage {
     val merged = ArrayList<UIMessagePart>(parts.size)
     parts.forEach { part ->
         val last = merged.lastOrNull()
-        if (part is UIMessagePart.Text && last is UIMessagePart.Text) {
-            merged[merged.lastIndex] = last.copy(text = last.text + part.text)
-        } else {
-            merged.add(part)
+        when {
+            part is UIMessagePart.Text && last is UIMessagePart.Text ->
+                merged[merged.lastIndex] = last.copy(text = last.text + part.text)
+
+            // 带签名 / 加密 metadata 的思考不能并：内容变了签名对不上，回传会被服务端拒绝
+            part is UIMessagePart.Reasoning && last is UIMessagePart.Reasoning &&
+                last.metadata.isNullOrEmpty() && part.metadata.isNullOrEmpty() ->
+                merged[merged.lastIndex] = last.copy(
+                    reasoning = last.reasoning + part.reasoning,
+                    finishedAt = part.finishedAt ?: last.finishedAt,
+                )
+
+            else -> merged.add(part)
         }
     }
     return copy(parts = merged)
 }
+
+/** 消息里有没有非空正文；没有正文的续写要从思考接着往下写 */
+private fun UIMessage.hasTextContent(): Boolean =
+    parts.any { it is UIMessagePart.Text && it.text.isNotBlank() }

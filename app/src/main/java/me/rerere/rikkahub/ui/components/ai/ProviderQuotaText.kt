@@ -93,17 +93,29 @@ fun rememberProviderQuota(
     return quota
 }
 
-/** 一行显示额度，用在模型列表的提供商标题和设置项的副标题上 */
+/**
+ * 一行显示额度，用在模型列表的提供商标题和设置项的副标题上。
+ *
+ * [quotaResult] 是调用方已经查好的结果：给定时直接拿它渲染，不再自己查一遍。
+ * 需要定时刷新的地方（批量面板）自己起一条轮询就够了，这里再起一条会重复打接口、
+ * 而且两条轮询各自拿着不同的值，显示的余额和算出来的消耗会对不上。
+ */
 @Composable
 fun ProviderQuotaText(
     providerSetting: ProviderSetting,
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
-    color: Color = Color.Unspecified
+    color: Color = Color.Unspecified,
+    refreshIntervalMillis: Long = 0,
+    quotaResult: Result<ProviderQuota>? = null,
 ) {
     if (!providerSetting.supportsQuota) return
 
-    val result = rememberProviderQuota(providerSetting)
+    val result = if (quotaResult != null) {
+        quotaResult
+    } else {
+        rememberProviderQuota(providerSetting, refreshIntervalMillis)
+    }
     val quota = result?.getOrNull()
     val text = when {
         result == null -> "~"
